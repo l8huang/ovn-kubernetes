@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -3258,20 +3259,30 @@ func createDefaultNoRerouteReplyTrafficPolicy(nbClient libovsdbclient.Client, ne
 // createDefaultNoReroutePodPolicies ensures egress pods east<->west traffic with regular pods,
 // i.e: ensuring that an egress pod can still communicate with a regular pod / service backed by regular pods
 func createDefaultNoReroutePodPolicies(nbClient libovsdbclient.Client, network, controller, routerName string, v4ClusterSubnet, v6ClusterSubnet []*net.IPNet) error {
-	for _, v4Subnet := range v4ClusterSubnet {
-		match := fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4Subnet.String(), v4Subnet.String())
-		dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, network, controller)
-		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
-			return fmt.Errorf("unable to create IPv4 no-reroute pod policies, err: %v", err)
+	klog.Infof("XXXXXX createDefaultNoReroutePodPolicies for network %s on router %s", network, routerName)
+	// log backtrace
+	klog.Infof("XXXXX %s", string(debug.Stack()))
+	for _, v4Subnet1 := range v4ClusterSubnet {
+		for _, v4Subnet2 := range v4ClusterSubnet {
+			match := fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4Subnet1.String(), v4Subnet2.String())
+			klog.Infof("XXXXX match %s", match)
+			dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, network, controller)
+			if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+				return fmt.Errorf("unable to create IPv4 no-reroute pod policies, err: %v", err)
+			}
 		}
 	}
-	for _, v6Subnet := range v6ClusterSubnet {
-		match := fmt.Sprintf("ip6.src == %s && ip6.dst == %s", v6Subnet.String(), v6Subnet.String())
-		dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, network, controller)
-		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
-			return fmt.Errorf("unable to create IPv6 no-reroute pod policies, err: %v", err)
+	for _, v6Subnet1 := range v6ClusterSubnet {
+		for _, v6Subnet2 := range v6ClusterSubnet {
+			match := fmt.Sprintf("ip6.src == %s && ip6.dst == %s", v6Subnet1.String(), v6Subnet2.String())
+			klog.Infof("XXXXX match %s", match)
+			dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, network, controller)
+			if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+				return fmt.Errorf("unable to create IPv6 no-reroute pod policies, err: %v", err)
+			}
 		}
 	}
+
 	return nil
 }
 

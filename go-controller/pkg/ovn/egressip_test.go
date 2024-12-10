@@ -67,6 +67,8 @@ const (
 	egressIPName    = "egressip"
 	egressIP2Name   = "egressip-2"
 	inspectTimeout  = 4 * time.Second // arbitrary, to avoid failures on github CI
+
+	RawClusterSubnets = "10.128.0.0/14/23,10.129.0.0/14/23,fda6::/48/64,be70::66/48/64"
 )
 
 func newEgressIPMeta(name string) metav1.ObjectMeta {
@@ -241,6 +243,9 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 	ginkgo.Context("On node UPDATE", func() {
 		ginkgo.It("OVN network does not depend on EgressIP status for assignment", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.IPv6Mode = true
+			config.Default.RawClusterSubnets = RawClusterSubnets
+			config.Default.ClusterSubnets, _ = config.ParseClusterSubnetEntries(RawClusterSubnets)
 			egressIP := "192.168.126.101"
 			zone := "global"
 			node1IPv4OVN := "192.168.126.202/24"

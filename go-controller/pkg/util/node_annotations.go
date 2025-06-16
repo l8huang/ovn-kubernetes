@@ -136,6 +136,16 @@ const (
 	// It is set by cluster manager.
 	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
+	// In multi-vteps case, the node will have multiple transit switch ports.
+	// This annotation will store all the transit switch port addresses.
+	// Its length and order must match k8s.ovn.org/node-encap-ips.
+	OvnTransitSwitchPortAddrs = "k8s.ovn.org/node-transit-switch-port-ifaddrs"
+
+	// In multi-vteps case, the node will have multiple transit switch ports.
+	// This annotation will store all the transit switch port tunnel ids.
+	// Its length and order must match k8s.ovn.org/node-encap-ips.
+	OvnTransitSwitchPortTunnelIDs = "k8s.ovn.org/node-transit-switch-port-tunnel-ids"
+
 	// OvnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
 	OvnNodeID = "k8s.ovn.org/node-id"
 
@@ -556,10 +566,44 @@ func createPrimaryIfAddrAnnotation(annotationName string, nodeAnnotation map[str
 	return nodeAnnotation, nil
 }
 
-// CreateNodeTransitSwitchPortAddrAnnotation creates the node annotation for the node's Transit switch port addresses.
+// CreateNodeTransitSwitchPortAddrAnnotation creates the node annotation for the node's Transit switch port address.
 func CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotation map[string]interface{}, nodeIPNetv4,
 	nodeIPNetv6 *net.IPNet) (map[string]interface{}, error) {
 	return createPrimaryIfAddrAnnotation(OvnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
+}
+
+// CreateNodeTransitSwitchPortAddrsAnnotation creates the node annotation for the node's Transit switch port addresses.
+func CreateNodeTransitSwitchPortAddrsAnnotation(nodeAnnotation map[string]interface{}, tspAddrs [][]*net.IPNet) (map[string]interface{}, error) {
+	if nodeAnnotation == nil {
+		nodeAnnotation = make(map[string]interface{})
+	}
+
+	tspAddrsAnnos := []PrimaryIfAddrAnnotation{}
+	for _, tspAddr := range tspAddrs {
+		addrAnno := PrimaryIfAddrAnnotation{}
+		if tspAddr[0] != nil {
+			addrAnno.IPv4 = tspAddr[0].String()
+		}
+		if tspAddr[1] != nil {
+			addrAnno.IPv6 = tspAddr[1].String()
+		}
+		tspAddrsAnnos = append(tspAddrsAnnos, addrAnno)
+	}
+
+	data, err := json.Marshal(tspAddrsAnnos)
+	if err != nil {
+		return nil, err
+	}
+	nodeAnnotation[OvnTransitSwitchPortAddrs] = string(data)
+	return nodeAnnotation, nil
+}
+
+func NodeTransitSwitchPortTunnelIDsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnTransitSwitchPortTunnelIDs] != newNode.Annotations[OvnTransitSwitchPortTunnelIDs]
+}
+
+func NodeTransitSwitchPortAddrsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnTransitSwitchPortAddrs] != newNode.Annotations[OvnTransitSwitchPortAddrs]
 }
 
 func NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool {
@@ -1075,6 +1119,45 @@ func UpdateNodeIDAnnotation(annotations map[string]interface{}, nodeID int) map[
 
 	annotations[OvnNodeID] = strconv.Itoa(nodeID)
 	return annotations
+}
+
+func UpdateNodeTransitSwitchPortTunnelIDsAnnotation(annotations map[string]interface{}, tunnelIds []int) (map[string]interface{}, error) {
+	if annotations == nil {
+		annotations = make(map[string]interface{})
+	}
+
+	data, err := json.Marshal(tunnelIds)
+	if err != nil {
+		return nil, err
+	}
+
+	annotations[OvnTransitSwitchPortTunnelIDs] = string(data)
+	return annotations, nil
+}
+
+// GetNodeIdName returns the node ID name corresponding to the encap IP at the given `index`
+// in the k8s.ovn.org/node-encap-ips annotation.
+func GetNodeIdName(nodeName string, index int) string {
+	if index == 0 {
+		return nodeName
+	}
+	// when the index of the encap IPs in the node > 1, using below naming convention:
+	// <node>_encap<i>
+	return fmt.Sprintf("%s_encap%d", nodeName, index)
+}
+
+func GetNodeTransitSwitchPortTunnelIDs(node *corev1.Node) ([]int, error) {
+	tunnelIdsString, ok := node.Annotations[OvnTransitSwitchPortTunnelIDs]
+	if !ok {
+		return nil, nil
+	}
+
+	var tunnelIds []int
+	if err := json.Unmarshal([]byte(tunnelIdsString), &tunnelIds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tunnel ids for node %s: %v", node.Name, err)
+	}
+
+	return tunnelIds, nil
 }
 
 // GetNodeID returns the id of the node set in the 'OvnNodeID' node annotation.

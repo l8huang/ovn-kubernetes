@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -678,4 +679,13 @@ func MustParseCIDR(cidr string) *net.IPNet {
 		panic(fmt.Sprintf("failed to parse CIDR %q: %v", cidr, err))
 	}
 	return ipNet
+}
+
+// GetJSONArrayLength unmarshals a JSON string and returns the number of elements in the array
+func GetJSONArrayLength(input string) int {
+	var list []interface{}
+	if err := json.Unmarshal([]byte(input), &list); err != nil {
+		return 0
+	}
+	return len(list)
 }

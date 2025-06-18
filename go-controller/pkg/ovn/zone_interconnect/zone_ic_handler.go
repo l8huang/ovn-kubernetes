@@ -396,85 +396,141 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 		return fmt.Errorf("failed to get the node transit switch port ips for node %s: %w", node.Name, err)
 	}
 
-	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
-	var transitRouterPortNetworks []string
-	for _, ip := range nodeTransitSwitchPortIPs {
-		transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
+	tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if len(tunnelIds) == 0 {
+		// use the node ID as the first transit switch port tunnel id, which is always allocated.
+		tunnelIds = append(tunnelIds, nodeID)
 	}
 
-	// Connect transit switch to the cluster router by creating a pair of logical switch port - logical router port
-	logicalRouterPortName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + node.Name)
-	logicalRouterPort := nbdb.LogicalRouterPort{
-		Name:     logicalRouterPortName,
-		MAC:      transitRouterPortMac.String(),
-		Networks: transitRouterPortNetworks,
-		Options: map[string]string{
-			"mcast_flood": "true",
-		},
-	}
-	logicalRouter := nbdb.LogicalRouter{
-		Name: zic.networkClusterRouterName,
+	encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+	if len(tunnelIds) != len(encapIPs) || len(tunnelIds) != len(nodeTransitSwitchPortIPs) {
+		return fmt.Errorf("number of encap IPs (%d), tunnel IDs (%d), and transit switch port IPs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), len(nodeTransitSwitchPortIPs), node.Name)
 	}
 
-	if err := libovsdbops.CreateOrUpdateLogicalRouterPort(zic.nbClient, &logicalRouter, &logicalRouterPort, nil); err != nil {
-		return fmt.Errorf("failed to create/update cluster router %s to add transit switch port %s for the node %s: %w", zic.networkClusterRouterName, logicalRouterPortName, node.Name, err)
+	for i, tunnelId := range tunnelIds {
+		tspIps := nodeTransitSwitchPortIPs[i]
+		transitRouterPortMac := util.IPAddrToHWAddr(tspIps[0].IP)
+		var transitRouterPortNetworks []string
+		for _, ip := range tspIps {
+			transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
+		}
+
+		// Connect transit switch to the cluster router by creating a pair of logical switch port - logical router port
+		logicalRouterPortName := util.GetNodeTransitSwitchPortName(zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix+node.Name), i)
+		logicalRouterPort := nbdb.LogicalRouterPort{
+			Name:     logicalRouterPortName,
+			MAC:      transitRouterPortMac.String(),
+			Networks: transitRouterPortNetworks,
+			Options: map[string]string{
+				"mcast_flood": "true",
+			},
+		}
+		logicalRouter := nbdb.LogicalRouter{
+			Name: zic.networkClusterRouterName,
+		}
+
+		if err := libovsdbops.CreateOrUpdateLogicalRouterPort(zic.nbClient, &logicalRouter, &logicalRouterPort, nil); err != nil {
+			return fmt.Errorf("failed to create/update cluster router %s to add transit switch port %s for the node %s: %w", zic.networkClusterRouterName, logicalRouterPortName, node.Name, err)
+		}
+
+		lspOptions := map[string]string{
+			libovsdbops.RouterPort:      logicalRouterPortName,
+			libovsdbops.RequestedTnlKey: strconv.Itoa(tunnelId),
+		}
+
+		// Store the node name in the external_ids column for book keeping
+		externalIDs := map[string]string{
+			"node": node.Name,
+		}
+
+		// when node only has one encap IP, this logical switch port is created
+		logicalSwitchPortName := util.GetNodeTransitSwitchPortName(zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name), i)
+		err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, logicalSwitchPortName,
+			lportTypeRouter, []string{lportTypeRouterAddr}, lspOptions, externalIDs)
+		if err != nil {
+			return err
+		}
+
+		encapIp := encapIPs[i]
+		klog.V(5).Infof("Updating port binding for local LSP %s with encap ip %s", logicalSwitchPortName, encapIp)
+		if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, logicalSwitchPortName, node.Name, encapIp); err != nil {
+			return fmt.Errorf("failed to update port binding for %s: %w", logicalSwitchPortName, err)
+		}
+
+		if i == 0 {
+			// Its possible that node is moved from a remote zone to the local zone. Check and delete the remote zone routes
+			// for this node as it's no longer needed.
+			err = zic.deleteLocalNodeStaticRoutes(node, tspIps)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
-	lspOptions := map[string]string{
-		libovsdbops.RouterPort:      logicalRouterPortName,
-		libovsdbops.RequestedTnlKey: strconv.Itoa(nodeID),
-	}
-
-	// Store the node name in the external_ids column for book keeping
-	externalIDs := map[string]string{
-		"node": node.Name,
-	}
-	err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name),
-		lportTypeRouter, []string{lportTypeRouterAddr}, lspOptions, externalIDs)
-	if err != nil {
-		return err
-	}
-
-	// Its possible that node is moved from a remote zone to the local zone. Check and delete the remote zone routes
-	// for this node as it's no longer needed.
-	return zic.deleteLocalNodeStaticRoutes(node, nodeTransitSwitchPortIPs)
+	return nil
 }
 
 // createRemoteZoneNodeResources creates the remote zone node resources
-//   - creates Transit switch if it doesn't yet exit
 //   - creates a lgoical port of type "remote" in the transit switch with the name as - <network_name>_tstor-<node_name>
 //     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
 //     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue_tstor-ovn-worker
 //   - binds the remote port to the node remote chassis in SBDB
 //   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
-func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
-	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
-	var transitRouterPortNetworks []string
-	for _, ip := range nodeTransitSwitchPortIPs {
-		transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
+func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs [][]*net.IPNet, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
+
+	tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if len(tunnelIds) == 0 {
+		// use the node ID as the first transit switch port tunnel id, which is always allocated.
+		tunnelIds = append(tunnelIds, nodeID)
 	}
 
-	remotePortAddr := transitRouterPortMac.String()
-	for _, tsNetwork := range transitRouterPortNetworks {
-		remotePortAddr = remotePortAddr + " " + tsNetwork
+	encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+	if len(tunnelIds) != len(encapIPs) || len(tunnelIds) != len(nodeTransitSwitchPortIPs) {
+		return fmt.Errorf("number of encap IPs (%d), tunnel IDs (%d), and transit switch port IPs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), len(nodeTransitSwitchPortIPs), node.Name)
 	}
 
-	lspOptions := map[string]string{
-		libovsdbops.RequestedTnlKey:  strconv.Itoa(nodeID),
-		libovsdbops.RequestedChassis: node.Name,
-	}
-	// Store the node name in the external_ids column for book keeping
-	externalIDs := map[string]string{
-		"node": node.Name,
-	}
+	// if remote node has multiple encap IPs, no remote logical switch port needs to be created, the remote logical switch port
+	// and static route will be created on-demand.
+	// if remote node has only one encap IP, create a remote logical switch port and static route.
 
-	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
-	if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
-		return err
-	}
+	for i, tunnelId := range tunnelIds {
+		tspIPs := nodeTransitSwitchPortIPs[i]
+		transitRouterPortMac := util.IPAddrToHWAddr(tspIPs[0].IP)
+		var transitRouterPortNetworks []string
+		for _, ip := range tspIPs {
+			transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
+		}
 
-	if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
-		return err
+		remotePortAddr := transitRouterPortMac.String()
+		for _, tsNetwork := range transitRouterPortNetworks {
+			remotePortAddr = remotePortAddr + " " + tsNetwork
+		}
+
+		lspOptions := map[string]string{
+			libovsdbops.RequestedTnlKey:  strconv.Itoa(tunnelId),
+			libovsdbops.RequestedChassis: node.Name,
+		}
+		// Store the node name in the external_ids column for book keeping
+		externalIDs := map[string]string{
+			"node": node.Name,
+		}
+
+		remotePortName := util.GetNodeTransitSwitchPortName(zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name), i)
+		if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
+			return err
+		}
+
+		encapIp := encapIPs[i]
+		klog.V(5).Infof("Updating port binding for remote LSP %s with encap ip %s", remotePortName, encapIp)
+		if err := libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, remotePortName, node.Name, encapIp); err != nil {
+			return fmt.Errorf("failed to update port binding for %s: %w", remotePortName, err)
+		}
+
+		if err := zic.addRemoteNodeStaticRoutes(node, tspIPs, nodeSubnets, nodeGRPIPs); err != nil {
+			return err
+		}
 	}
 
 	// Cleanup the logical router port connecting to the transit switch for the remote node (if present)

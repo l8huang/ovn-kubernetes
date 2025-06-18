@@ -975,14 +975,15 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return fmt.Errorf("expected node annotation for node %s to have transit switch port ips allocated", n.Name)
 						}
 
-						transitSwitchIps, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
+						transitSwitchIpList, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
 						if err != nil {
 							return fmt.Errorf("error parsing transit switch ip annotations for the node %s", n.Name)
 						}
 
-						if len(transitSwitchIps) < 1 {
+						if len(transitSwitchIpList) < 1 || len(transitSwitchIpList[0]) < 1 {
 							return fmt.Errorf("transit switch ips for node %s not allocated", n.Name)
 						}
+						transitSwitchIps := transitSwitchIpList[0]
 
 						_, transitSwitchV4Subnet, err := net.ParseCIDR(config.ClusterManager.V4TransitSwitchSubnet)
 						if err != nil {
@@ -1072,12 +1073,12 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return fmt.Errorf("expected node annotation for node %s to have transit switch port ips allocated", n.Name)
 						}
 
-						transitSwitchIps, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
+						transitSwitchIpList, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
 						if err != nil {
 							return fmt.Errorf("error parsing transit switch ip annotations for the node %s", n.Name)
 						}
 
-						if len(transitSwitchIps) < 1 {
+						if len(transitSwitchIpList) < 1 || len(transitSwitchIpList[0]) < 1 {
 							return fmt.Errorf("transit switch ips for node %s not allocated", n.Name)
 						}
 
@@ -1108,12 +1109,12 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						return fmt.Errorf("expected node annotation for node node1 to have transit switch port ips allocated")
 					}
 
-					transitSwitchIps, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
+					transitSwitchIpList, err := util.ParseNodeTransitSwitchPortAddrs(updatedNode)
 					if err != nil {
 						return fmt.Errorf("error parsing transit switch ip annotations for the node node1")
 					}
 
-					if len(transitSwitchIps) < 1 {
+					if len(transitSwitchIpList) < 1 || len(transitSwitchIpList[0]) < 1 {
 						return fmt.Errorf("transit switch ips for node node1 not allocated")
 					}
 					gomega.Expect(node1TransitSwitchIps).To(gomega.Equal(updatedNode1TransitSwitchIps))

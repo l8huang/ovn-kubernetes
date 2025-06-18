@@ -256,6 +256,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 		node1Chassis       sbdb.Chassis
 		node2Chassis       sbdb.Chassis
 		node3Chassis       sbdb.Chassis
+		node4Chassis       sbdb.Chassis
+		node1Encap         sbdb.Encap
+		node2Encap         sbdb.Encap
+		node3Encap         sbdb.Encap
+		node4Encap         sbdb.Encap
 		initialNBDB        []libovsdbtest.TestData
 		initialSBDB        []libovsdbtest.TestData
 		testNodesRouteInfo map[string]map[string]string
@@ -278,11 +283,15 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 		libovsdbCleanup = nil
+		node1Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Hostname: "node1", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac6"}}
+		node2Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Hostname: "node2", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac7"}}
+		node3Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", Hostname: "node3", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac8"}}
+		node4Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac9"}}
 
-		node1Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Hostname: "node1", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"}
-		node2Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Hostname: "node2", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"}
-		node3Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", Hostname: "node3", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8"}
-
+		node1Encap = sbdb.Encap{ChassisName: node1Chassis.Hostname, IP: "10.0.0.2", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac6", Type: "geneve"}
+		node2Encap = sbdb.Encap{ChassisName: node2Chassis.Hostname, IP: "10.0.0.3", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac7", Type: "geneve"}
+		node3Encap = sbdb.Encap{ChassisName: node3Chassis.Hostname, IP: "10.0.0.4", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac8", Type: "geneve"}
+		node4Encap = sbdb.Encap{ChassisName: node4Chassis.Hostname, IP: "10.0.0.5", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac9", Type: "geneve"}
 	})
 
 	ginkgo.AfterEach(func() {
@@ -301,6 +310,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "2",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.2\"]",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.2.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.2/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -318,6 +328,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "3",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.3\"]",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.3.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.3/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -335,6 +346,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "4",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.4\"]",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.4.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.4/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -356,7 +368,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 			}
 
 			initialSBDB = []libovsdbtest.TestData{
-				&node1Chassis, &node2Chassis, &node3Chassis}
+				&node1Encap, &node2Encap, &node3Encap,
+				&node1Chassis, &node2Chassis, &node3Chassis,
+			}
 		})
 
 		ginkgo.It("Basic checks", func() {
@@ -594,6 +608,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "2",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.2\"]",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.2.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.2/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -611,6 +626,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "3",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.3\"]",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.3.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.3/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -628,6 +644,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "4",
+						util.OVNNodeEncapIPs:               "[\"10.0.0.4\"]",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.4.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.4/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -647,7 +664,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 			}
 
 			initialSBDB = []libovsdbtest.TestData{
-				&node1Chassis, &node2Chassis, &node3Chassis}
+				&node1Encap, &node2Encap, &node3Encap,
+				&node1Chassis, &node2Chassis, &node3Chassis,
+			}
 		})
 
 		ginkgo.It("Basic checks", func() {
@@ -871,6 +890,10 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 	ginkgo.Context("Error scenarios", func() {
 		ginkgo.It("Missing annotations and error scenarios for local node", func() {
 			app.Action = func(ctx *cli.Context) error {
+				initialSBDB = []libovsdbtest.TestData{
+					&node1Encap, &node2Encap, &node3Encap, &node4Encap,
+					&node1Chassis, &node2Chassis, &node3Chassis, &node4Chassis,
+				}
 				dbSetup := libovsdbtest.TestSetup{
 					NBData: initialNBDB,
 					SBData: initialSBDB,
@@ -893,7 +916,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 					},
 				}
 
-				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
@@ -903,22 +926,26 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get node id for node - node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
 				// Set the node id
 				testNode4.Annotations = map[string]string{ovnNodeIDAnnotaton: "5"}
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the node transit switch port ips for node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the node transit switch port ips for node node4")))
 
 				// Set the node transit switch port ips
 				testNode4.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.5/16\"}"
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the network id for the network default on node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("number of encap IPs (0), tunnel IDs (1), and transit switch port IPs (1) for node node4 do not match")))
 
-				// Set the network id for default network
-				testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
+				// set encap IPs
+				testNode4.Annotations[util.OVNNodeEncapIPs] = "[\"10.0.0.5\"]"
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to create/update cluster router ovn_cluster_router to add transit switch port rtots-node4 for the node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to create/update cluster router ovn_cluster_router to add transit switch port rtots-node4 for the node node4")))
+
+				// // Set the network id for default network
+				// testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
+				// err = zoneICHandler.AddLocalZoneNode(&testNode4)
 
 				// Create the cluster router
 				r := newOVNClusterRouter(types.DefaultNetworkName)
@@ -926,11 +953,16 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node node4 subnets annotation")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 subnets annotation")))
 
 				// Set node subnet annotation
 				testNode4.Annotations[ovnNodeSubnetsAnnotation] = "{\"default\":[\"10.244.5.0/24\"]}"
 
+				err = zoneICHandler.AddLocalZoneNode(&testNode4)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 Gateway router LRP Addrs annotation")))
+
+				// Set annotation k8s.ovn.org/node-gateway-router-lrp-ifaddrs
+				testNode4.Annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.5/16\"}}"
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -954,6 +986,10 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 
 		ginkgo.It("Missing annotations and error scenarios for remote node", func() {
 			app.Action = func(ctx *cli.Context) error {
+				initialSBDB = []libovsdbtest.TestData{
+					&node1Encap, &node2Encap, &node3Encap, &node4Encap,
+					&node1Chassis, &node2Chassis, &node3Chassis, &node4Chassis,
+				}
 				dbSetup := libovsdbtest.TestSetup{
 					NBData: initialNBDB,
 					SBData: initialSBDB,
@@ -979,7 +1015,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 					},
 				}
 
-				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3, &testNode4)
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
@@ -989,46 +1025,37 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get node id for node - node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
 				// Set the node id
 				testNode4.Annotations[ovnNodeIDAnnotaton] = "5"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node chassis-id for node")
-
-				// Set the node-chassis-id
-				testNode4.Annotations[ovnNodeChassisIDAnnotatin] = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"
-				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the node transit switch port ips for node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the node transit switch port IP addresses")))
 
 				// Set the node transit switch port ips
 				testNode4.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.5/16\"}"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the network id for the network default on node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("number of encap IPs (0), tunnel IDs (1), and transit switch port IPs (1) for node node4 do not match")))
 
-				// Set the network id for default network
-				testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
-				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to update chassis node4 for remote port tstor-node4")
-
-				// Create remote chassis
-				node4Chassis := &sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"}
-				encap := &sbdb.Encap{ChassisName: node4Chassis.Name, IP: "10.0.0.12"}
-				err = libovsdbops.CreateOrUpdateChassis(libovsdbOvnSBClient, node4Chassis, encap)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
+				// set encap IPs
+				testNode4.Annotations[util.OVNNodeEncapIPs] = "[\"10.0.0.5\"]"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node node4 subnets annotation")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 subnets annotation")))
 
 				// Set node subnet annotation
 				testNode4.Annotations[ovnNodeSubnetsAnnotation] = "{\"default\":[\"10.244.5.0/24\"]}"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "unable to create static routes")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to create static route")))
 
 				// Create the cluster router
 				r := newOVNClusterRouter(types.DefaultNetworkName)
 				err = libovsdbops.CreateOrUpdateLogicalRouter(libovsdbOvnNBClient, r)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 Gateway router LRP Addrs annotation")))
+
+				// Set annotation k8s.ovn.org/node-gateway-router-lrp-ifaddrs
+				testNode4.Annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.5/16\"}}"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

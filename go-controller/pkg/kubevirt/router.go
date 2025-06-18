@@ -223,7 +223,7 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 	}
 	for _, podIP := range podAnnotation.IPs {
 		ipFamily := utilnet.IPFamilyOfCIDR(podIP)
-		transitSwitchPortAddr, err := util.MatchFirstIPNetFamily(ipFamily == utilnet.IPv6, transitSwitchPortAddrs)
+		transitSwitchPortAddr, err := util.MatchFirstIPNetFamily(ipFamily == utilnet.IPv6, transitSwitchPortAddrs[0])
 		if err != nil {
 			return err
 		}

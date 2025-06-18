@@ -234,7 +234,7 @@ func (c *Controller) nodeStateFor(name string) (*nodeState, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unable to fetch router transit IP for node %s: %w", node, err)
 		}
-		for _, ip := range transitSwitchIPs {
+		for _, ip := range transitSwitchIPs[0] {
 			if utilnet.IsIPv4(ip.IP) {
 				transitIPV4 = ip.IP
 			} else if utilnet.IsIPv6(ip.IP) {

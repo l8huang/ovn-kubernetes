@@ -725,7 +725,35 @@ func parsePrimaryIfAddrAnnotation(node *corev1.Node, annotationName string) ([]*
 	return ipAddrs, nil
 }
 
+// ParseNodeTransitSwitchPortAddrs returns the IPv4 and/or IPv6 addresses for the node's transit switch port
+// stored in the annotation `k8s.ovn.org/node-transit-switch-port-ifaddrs`
+func parsePrimaryIfAddrsAnnotation(node *corev1.Node) ([][]*net.IPNet, error) {
+	str, ok := node.Annotations[OvnTransitSwitchPortAddrs]
+	if !ok {
+		return nil, nil
+	}
+
+	ifAddrAnnos := []PrimaryIfAddrAnnotation{}
+	if err := json.Unmarshal([]byte(str), &ifAddrAnnos); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %w", OvnTransitSwitchPortAddrs, node.Name, err)
+	}
+
+	ipAddrsList := [][]*net.IPNet{}
+	for _, ifAddrAnno := range ifAddrAnnos {
+		ipAddrs, err := convertPrimaryIfAddrAnnotationToIPNet(ifAddrAnno)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse annotation: %s for node %q, err: %w", OvnTransitSwitchPortAddrs, node.Name, err)
+		}
+		if len(ipAddrs) > 0 {
+			ipAddrsList = append(ipAddrsList, ipAddrs)
+		}
+	}
+
+	return ipAddrsList, nil
+}
+
 func convertPrimaryIfAddrAnnotationToIPNet(ifAddr PrimaryIfAddrAnnotation) ([]*net.IPNet, error) {
+
 	var ipAddrs []*net.IPNet
 	if ifAddr.IPv4 != "" {
 		ip, ipNet, err := net.ParseCIDR(ifAddr.IPv4)
@@ -752,9 +780,27 @@ func ParseNodeGatewayRouterLRPAddrs(node *corev1.Node) ([]*net.IPNet, error) {
 }
 
 // ParseNodeTransitSwitchPortAddrs returns the IPv4 and/or IPv6 addresses for the node's transit switch port
-// stored in the 'ovnTransitSwitchPortAddr' annotation
-func ParseNodeTransitSwitchPortAddrs(node *corev1.Node) ([]*net.IPNet, error) {
-	return parsePrimaryIfAddrAnnotation(node, OvnTransitSwitchPortAddr)
+// stored in the annotation `k8s.ovn.org/node-transit-switch-port-ifaddrs`(if exists) or
+// `k8s.ovn.org/node-transit-switch-port-ifaddr`
+func ParseNodeTransitSwitchPortAddrs(node *corev1.Node) ([][]*net.IPNet, error) {
+	ret := [][]*net.IPNet{}
+
+	// try k8s.ovn.org/node-transit-switch-port-ifaddrs first to handle multi-VTEP cases
+	ret, err := parsePrimaryIfAddrsAnnotation(node)
+	if err != nil {
+		return nil, err
+	}
+	if len(ret) > 0 {
+		return ret, nil
+	}
+
+	// fallback to annotation k8s.ovn.org/node-transit-switch-port-ifaddr
+	ips, err := parsePrimaryIfAddrAnnotation(node, OvnTransitSwitchPortAddr)
+	if err != nil {
+		return nil, err
+	}
+	ret = append(ret, ips)
+	return ret, nil
 }
 
 // ParseNodeMasqueradeSubnet returns the IPv4 and/or IPv6 networks for the node's gateway router port
@@ -1144,6 +1190,15 @@ func GetNodeIdName(nodeName string, index int) string {
 	// when the index of the encap IPs in the node > 1, using below naming convention:
 	// <node>_encap<i>
 	return fmt.Sprintf("%s_encap%d", nodeName, index)
+}
+
+// GetNodeTransitSwitchPortName returns the transit switch port name corresponding to
+// the encap IP at the given `index` in the k8s.ovn.org/node-encap-ips annotation.
+func GetNodeTransitSwitchPortName(baseName string, index int) string {
+	if index == 0 {
+		return baseName
+	}
+	return fmt.Sprintf("%s_encap%d", baseName, index)
 }
 
 func GetNodeTransitSwitchPortTunnelIDs(node *corev1.Node) ([]int, error) {

@@ -2758,7 +2758,7 @@ func (e *EgressIPController) getTransitIP(nodeName string, wantsIPv6 bool) (stri
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch transit switch IP for node %s: %w", nodeName, err)
 	}
-	nodeTransitIP, err := util.MatchFirstIPNetFamily(wantsIPv6, nodeTransitIPs)
+	nodeTransitIP, err := util.MatchFirstIPNetFamily(wantsIPv6, nodeTransitIPs[0])
 	if err != nil {
 		return "", fmt.Errorf("could not find transit switch IP of node %v for this family %v: %v", node, wantsIPv6, err)
 	}

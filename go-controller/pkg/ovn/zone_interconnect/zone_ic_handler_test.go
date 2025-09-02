@@ -943,9 +943,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to create/update cluster router ovn_cluster_router to add transit switch port rtots-node4 for the node node4")))
 
-				// // Set the network id for default network
-				// testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
-				// err = zoneICHandler.AddLocalZoneNode(&testNode4)
+				// Set the network id for default network
+				testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
+				err = zoneICHandler.AddLocalZoneNode(&testNode4)
 
 				// Create the cluster router
 				r := newOVNClusterRouter(types.DefaultNetworkName)

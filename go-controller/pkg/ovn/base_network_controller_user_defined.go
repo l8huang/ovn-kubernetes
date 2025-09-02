@@ -332,6 +332,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
 
+	// TODO: add remote port in Transit switch if required
 	if requiresLogicalPort {
 		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadName, network, lspEnabled)
 		if err != nil {

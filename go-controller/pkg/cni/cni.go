@@ -219,6 +219,26 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 
 	podInterfaceInfo.SkipIPConfig = kubevirt.IsPodLiveMigratable(pod)
 
+	if pr.CNIConf.DeviceID != "" {
+		if config.OvnKubeNode.Mode == types.NodeModeFull {
+			// TODO: currently multi-vteps only works for SR-IOV VF case, the encap IP is derived from the VF Device ID.
+			//       Need to extend it to support other cases, e.g. veth
+			encapIP, err := getPfEncapIP(pr.CNIConf.DeviceID)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(encapIP) > 0 {
+				klog.Infof("%s device ID %s use encap IP %s", pr, pr.CNIConf.DeviceID, encapIP)
+				podNADAnnotation.EncapIP = encapIP
+				err = util.UpdatePodAnnotationWithRetry(clientset.podLister, &clientset.kube, pod, podNADAnnotation, pr.nadName)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	response := &Response{KubeAuth: kubeAuth}
 	if !config.UnprivilegedMode {
 		netName := pr.netName

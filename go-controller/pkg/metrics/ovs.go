@@ -286,14 +286,44 @@ func convertToFloat64(val *int) float64 {
 	return value
 }
 
+<<<<<<< HEAD
 func getOvsVersionInfo(ovsDBClient libovsdbclient.Client) {
 	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+=======
+func OvsVersionInfoUpdater(ovsDBClient libovsdbclient.Client, nodeName string, metricsScrapeInterval int, stopChan <-chan struct{}) {
+	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := getOvsVersionInfo(nodeName, ovsDBClient); err != nil {
+				klog.Errorf("Error getting ovs version: %v", err)
+			}
+		case <-stopChan:
+			return
+		}
+	}
+}
+
+func getOvsVersionInfo(nodeName string, ovsDBClient libovsdbclient.Client) (err error) {
+	klog.Infof("XXXXX getOvsVersionInfo")
+	metricOvsVersion.Reset()
+	openVswitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+>>>>>>> b47f8f274 (update)
 	if err != nil {
 		klog.Errorf("Failed to get ovsdb openvswitch entry :(%v)", err)
 		return
 	}
+<<<<<<< HEAD
 	if openvSwitch.OVSVersion != nil {
 		ovsVersion = *openvSwitch.OVSVersion
+=======
+	klog.Infof("XXXXX openVswitch.OVSVersion: %s", *openVswitch.OVSVersion)
+	if openVswitch.OVSVersion != nil {
+		ovsVersion := *openVswitch.OVSVersion
+		metricOvsVersion.WithLabelValues(ovsVersion, nodeName).Set(1)
+>>>>>>> b47f8f274 (update)
 	} else {
 		klog.Errorf("Failed to get ovs version information")
 		return
@@ -429,6 +459,48 @@ func setOvsDatapathMetrics(ovsAppctl ovsClient, datapaths []string) (err error) 
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func setOvsDatapathOffloadMetrics(ovsVswitchdAppctl ovsClient) error {
+	stdout, stderr, err := ovsVswitchdAppctl("upcall/show")
+	if err != nil {
+		return fmt.Errorf("failed to get output of ovs-appctl upcall/show "+
+			"stderr(%s) :(%v)", stderr, err)
+	}
+
+	output := strings.Split(stdout, "\n")
+	var datapathName string
+	for _, line := range output {
+		if strings.Contains(line, "@") {
+			datapath := strings.Split(line, "@")
+			datapathName = strings.TrimSuffix(datapath[1], ":")
+		} else if strings.Contains(line, "offloaded flows") {
+			offloadFields := strings.Split(line, ":")
+			offloadValue := strings.TrimSpace(offloadFields[1])
+			value := parseMetricToFloat(MetricOvsSubsystemVswitchd, "dp_offloaded_flows_total", offloadValue)
+			metricOvsDpOffloadedFlowsTotal.WithLabelValues(datapathName).Set(value)
+			break
+		}
+	}
+	return nil
+}
+
+func updateOvsDatapathMetrics(ovsVswitchdAppctl ovsClient) {
+	datapaths, err := getOvsDatapaths(ovsVswitchdAppctl)
+	if err != nil {
+		klog.Errorf("Getting ovs datapath list failed: %s", err.Error())
+		return
+	}
+
+	if err = setOvsDatapathMetrics(ovsVswitchdAppctl, datapaths); err != nil {
+		klog.Errorf("Setting ovs datapath metrics failed: %s", err.Error())
+	}
+	if err = setOvsDatapathOffloadMetrics(ovsVswitchdAppctl); err != nil {
+		klog.Errorf("Setting ovs datapath offload metrics failed: %s", err.Error())
+	}
+}
+
+>>>>>>> b47f8f274 (update)
 // ovsDatapathMetricsUpdater updates the ovs datapath metrics
 func ovsDatapathMetricsUpdater(ovsAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
 	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
@@ -436,6 +508,7 @@ func ovsDatapathMetricsUpdater(ovsAppctl ovsClient, metricsScrapeInterval int, s
 	for {
 		select {
 		case <-ticker.C:
+<<<<<<< HEAD
 			datapaths, err := getOvsDatapaths(ovsAppctl)
 			if err != nil {
 				klog.Errorf("Getting ovs datapath list failed: %s", err.Error())
@@ -444,21 +517,50 @@ func ovsDatapathMetricsUpdater(ovsAppctl ovsClient, metricsScrapeInterval int, s
 			if err = setOvsDatapathMetrics(ovsAppctl, datapaths); err != nil {
 				klog.Errorf("Setting ovs datapath metrics failed: %s", err.Error())
 			}
+=======
+			klog.Infof("XXXXX ovsDatapathMetricsUpdater")
+			updateOvsDatapathMetrics(ovsVswitchdAppctl)
+>>>>>>> b47f8f274 (update)
 		case <-stopChan:
 			return
 		}
 	}
 }
 
+func resetOvsBridgeMetrics() {
+	// we need to reset metrics vectors prior to collecting new ones.
+	// this reset is local to prom client endpoint only and helps us
+	// improve performance by deleting non-actual stale metrics
+	metricInterfaceDriverName.Reset()
+	metricInterfaceDriverVersion.Reset()
+	metricInterfaceFirmwareVersion.Reset()
+	for _, interfaceMetricInfo := range ovsInterfaceMetricsDataMap {
+		interfaceMetricInfo.metric.Reset()
+	}
+
+}
+
 // ovsBridgeMetricsUpdater updates bridge related metrics
-func ovsBridgeMetricsUpdater(ovsDBClient libovsdbclient.Client, ovsAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
+func ovsBridgeMetricsUpdater(ovsDBClient libovsdbclient.Client, ovsOfctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
 	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
 	defer ticker.Stop()
 	var err error
 	for {
 		select {
 		case <-ticker.C:
+<<<<<<< HEAD
 			if err = updateOvsBridgeMetrics(ovsDBClient, ovsAppctl); err != nil {
+=======
+			klog.Infof("XXXXX ovsBridgeMetricsUpdater")
+			resetOvsBridgeMetrics()
+			// set geneve interface metrics
+			err := geneveInterfaceMetricsUpdate()
+			if err != nil {
+				klog.Errorf("%s", err.Error())
+			}
+			// update ovs bridge metrics
+			if err = updateOvsBridgeMetrics(ovsDBClient, ovsOfctl); err != nil {
+>>>>>>> b47f8f274 (update)
 				klog.Errorf("Getting ovs bridge info failed: %s", err.Error())
 			}
 		case <-stopChan:
@@ -512,9 +614,208 @@ func getOvsBridgeOpenFlowsCount(ovsOfctl ovsClient, bridgeName string) (float64,
 		"flow_count field", bridgeName)
 }
 
+<<<<<<< HEAD
 func ovsInterfaceMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
 	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
 	defer ticker.Stop()
+=======
+func registerOvsInterfaceMetrics(metricNamespace, metricSubsystem string) {
+	// The metrics not covered by the OVS native metrics are moved to ovsInterfaceExtraMetricsDataMap,
+	// so the ovsInterfaceExtraMetricsDataMap can be used to register them when OVS native metrics is enabled.
+	// This function is only called when OVS native metrics is disabled, so merge them into ovsInterfaceMetricsDataMap to
+	// make it backward compatible.
+	for metricName, metricInfo := range ovsInterfaceExtraMetricsDataMap {
+		ovsInterfaceMetricsDataMap[metricName] = metricInfo
+	}
+
+	for InterfaceMetricName, InterfaceMetricInfo := range ovsInterfaceMetricsDataMap {
+		InterfaceMetricInfo.metric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Subsystem: metricSubsystem,
+			Name:      InterfaceMetricName,
+			Help:      InterfaceMetricInfo.help,
+		},
+			[]string{
+				"bridge",
+				"port",
+				"interface",
+			})
+		prometheus.MustRegister(InterfaceMetricInfo.metric)
+	}
+}
+
+func getOvsInterfaceType(state string) float64 {
+	var typeValue float64
+	if state == "" {
+		state = "system"
+	}
+	interfaceTypeMap := map[string]float64{
+		"system":   1,
+		"internal": 2,
+		"tap":      3,
+		"geneve":   4,
+		"gre":      5,
+		"vxlan":    6,
+		"lisp":     7,
+		"stt":      8,
+		"patch":    9,
+		"dpdk":     10,
+	}
+	if value, ok := interfaceTypeMap[state]; ok {
+		typeValue = value
+	} else {
+		typeValue = 0
+	}
+	return typeValue
+}
+
+func getOvsInterfaceDuplexType(fieldValue *string) float64 {
+	var duplexValue float64
+	duplexValue = 2
+	if fieldValue != nil {
+		if *fieldValue == "half" {
+			duplexValue = 0
+		} else if *fieldValue == "full" {
+			duplexValue = 1
+		}
+	}
+	return duplexValue
+}
+
+func getOvsInterfaceState(state *string) float64 {
+	var stateValue float64
+	if state == nil || *state == "" {
+		return 0
+	}
+	stateMap := map[string]float64{
+		"down": 1,
+		"up":   2,
+	}
+	if value, ok := stateMap[*state]; ok {
+		stateValue = value
+	} else {
+		stateValue = 0
+	}
+	return stateValue
+}
+
+func setOvsInterfaceStatistics(interfaceBridge, interfacePort, interfaceName string,
+	statsMap map[string]int) {
+	var InterfaceStats = []string{
+		"rx_packets",
+		"rx_bytes",
+		"rx_dropped",
+		"rx_frame_err",
+		"rx_over_err",
+		"rx_crc_err",
+		"rx_errors",
+		"tx_packets",
+		"tx_bytes",
+		"tx_dropped",
+		"collisions",
+		"tx_errors",
+	}
+
+	for _, stat := range InterfaceStats {
+		var statValue float64
+		metricName := "interface_" + stat
+		if value, ok := statsMap[stat]; ok {
+			statValue = float64(value)
+		}
+		ovsInterfaceMetricsDataMap[metricName].metric.WithLabelValues(interfaceBridge,
+			interfacePort, interfaceName).Set(statValue)
+	}
+}
+
+func setSriovInterfaceStatsViaEthtool(etHandler *ethtool.Ethtool, interfaceBridge, interfacePort, interfaceName,
+	interfaceDriverName string) {
+	// Check if this is Representor, skip anything else
+	// For ovs-doca the driver_name is mlx5_pci whereas for ovs-kernel the driver_name is mxl5e_rep
+	if etHandler == nil || !strings.HasPrefix(interfaceDriverName, "mlx5") {
+		// Check if we need to explicitly set these to 0
+		return
+	}
+
+	ethStats, err := etHandler.Stats(interfaceName)
+	if err != nil {
+		klog.Errorf("Failed to get stats using ethtool binding: %v", err)
+		return
+	}
+
+	// VF-rep and uplink interface have different stats group to count bytes/packets,
+	// see https://docs.kernel.org/networking/device_drivers/ethernet/mellanox/mlx5/counters.html
+	getStatWithFallback := func(k1 string, k2 string) uint64 {
+		if v, ok := ethStats[k1]; ok {
+			return v
+		}
+		if v, ok := ethStats[k2]; ok {
+			return v
+		}
+		return 0
+	}
+
+	swRxBytes := ethStats["tx_bytes"]
+	swRxPackets := ethStats["tx_packets"]
+	totalRxBytes := getStatWithFallback("vport_tx_bytes", "tx_bytes_phy")
+	totalRxPackets := getStatWithFallback("vport_tx_packets", "tx_packets_phy")
+
+	// Pod Transmit is VF-Representor receive
+	swTxBytes := ethStats["rx_bytes"]
+	swTxPackets := ethStats["rx_packets"]
+	totalTxBytes := getStatWithFallback("vport_rx_bytes", "rx_bytes_phy")
+	totalTxPackets := getStatWithFallback("vport_rx_packets", "rx_packets_phy")
+
+	ovsInterfaceMetricsDataMap["interface_tx_sw_bytes"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(swTxBytes))
+	ovsInterfaceMetricsDataMap["interface_tx_total_bytes"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(totalTxBytes))
+	ovsInterfaceMetricsDataMap["interface_tx_sw_packets"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(swTxPackets))
+	ovsInterfaceMetricsDataMap["interface_tx_total_packets"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(totalTxPackets))
+
+	ovsInterfaceMetricsDataMap["interface_rx_sw_bytes"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(swRxBytes))
+	ovsInterfaceMetricsDataMap["interface_rx_total_bytes"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(totalRxBytes))
+	ovsInterfaceMetricsDataMap["interface_rx_sw_packets"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(swRxPackets))
+	ovsInterfaceMetricsDataMap["interface_rx_total_packets"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(totalRxPackets))
+}
+
+func setOvsPortMissPktsInfo(interfaceBridge, interfacePort, interfaceName, interfaceDriverName string) {
+	// Check if this is Representor, if so, let's get any rate configured on it.
+	if strings.Compare(interfaceDriverName, "mlx5e_rep") != 0 {
+		// Check if we need to explicitly set these to 0
+		return
+	}
+	// In theory we don't need to get this information every time, but this value can
+	// change, so we can read it along with the dropped stats.
+	maxPPS, burstPPS, err := util.GetSriovnetOps().GetRepresentorVFMissPktRate(interfaceName)
+	if err != nil {
+		// Maybe set some value that indicates  "unknown" and trigger an alert based on that.
+		klog.Errorf("setOvsPortMissPktsInfo: error getting misspkt rate..: %v", err)
+		return
+	}
+	ovsInterfaceMetricsDataMap["interface_tx_misspkts_pps"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(maxPPS))
+	ovsInterfaceMetricsDataMap["interface_tx_misspkts_burst"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(burstPPS))
+	dropPacktCount, err := util.GetSriovnetOps().GetRepresentorVFMissPktDrops(interfaceName)
+	if err != nil {
+		// Maybe set some value that indicates  "unknown" and trigger an alert based on that.
+		klog.Errorf("setOvsPortMissPktsInfo: error getting misspkt drops..: %v", err)
+		return
+	}
+	ovsInterfaceMetricsDataMap["interface_tx_misspkts_packets_drops"].metric.WithLabelValues(
+		interfaceBridge, interfacePort, interfaceName).Set(float64(dropPacktCount))
+}
+
+func setOvsInterfaceQdiscIngress(interfaceName string, bridgeName string, portName string,
+	link netlink.Link) {
+	var metricValue float64 = -1
+>>>>>>> b47f8f274 (update)
 	var err error
 	for {
 		select {
@@ -534,12 +835,66 @@ func updateOvsInterfaceMetrics(ovsDBClient libovsdbclient.Client) error {
 	if err != nil {
 		return fmt.Errorf("failed to get ovsdb interface table :(%v)", err)
 	}
+<<<<<<< HEAD
 	var interfaceStats = []string{
 		"rx_dropped",
 		"rx_errors",
 		"tx_dropped",
 		"tx_errors",
 		"collisions",
+=======
+	for _, interfaceInfo := range interfaceList {
+		interfaceName := interfaceInfo.Name
+		interfaceData := interfaceInfoMap[interfaceInfo.UUID]
+		interfaceTypeValue := getOvsInterfaceType(interfaceInfo.Type)
+		if interfaceTypeValue == 0 || interfaceTypeValue == 4 {
+			// not gathering metrics for not-typed and geneve interfaces
+			continue
+		}
+		portName := interfaceData.port
+		if ifaceID, ok := interfaceInfo.ExternalIDs["iface-id"]; ok {
+			portName = ifaceID
+		}
+		if !config.Default.EnableOvsNativeMetrics {
+			ovsInterfaceMetricsDataMap["interface_type"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(interfaceTypeValue)
+			duplexType := getOvsInterfaceDuplexType(interfaceInfo.Duplex)
+			ovsInterfaceMetricsDataMap["interface_duplex"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(duplexType)
+			adminStateValue := getOvsInterfaceState(interfaceInfo.AdminState)
+			ovsInterfaceMetricsDataMap["interface_admin_state"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(adminStateValue)
+			linkStatevalue := getOvsInterfaceState(interfaceInfo.LinkState)
+			ovsInterfaceMetricsDataMap["interface_link_state"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(linkStatevalue)
+			ovsInterfaceMetricsDataMap["interface_ifindex"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(convertToFloat64(interfaceInfo.Ifindex))
+			ovsInterfaceMetricsDataMap["interface_link_resets"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(convertToFloat64(interfaceInfo.LinkResets))
+			ovsInterfaceMetricsDataMap["interface_link_speed"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(convertToFloat64(interfaceInfo.LinkSpeed))
+			ovsInterfaceMetricsDataMap["interface_mtu"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(convertToFloat64(interfaceInfo.MTU))
+			ovsInterfaceMetricsDataMap["interface_of_port"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(convertToFloat64(interfaceInfo.Ofport))
+			ovsInterfaceMetricsDataMap["interface_ingress_policing_burst"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(float64(interfaceInfo.IngressPolicingBurst))
+			ovsInterfaceMetricsDataMap["interface_ingress_policing_rate"].metric.WithLabelValues(
+				interfaceData.bridge, portName, interfaceName).Set(float64(interfaceInfo.IngressPolicingRate))
+			// set the ovs interface status fields
+			setOvsInterfaceStatusFields(interfaceData.bridge, portName, interfaceName, interfaceInfo.Status)
+			// set ovs interface stastics fields
+			setOvsInterfaceStatistics(interfaceData.bridge, portName, interfaceName, interfaceInfo.Statistics)
+		}
+
+		if interfaceTypeValue != 2 && interfaceTypeValue != 9 && interfaceTypeValue != 10 {
+			setOvsInterfaceQdiscIngress(interfaceName, interfaceData.bridge, portName, nil)
+		}
+		// set interface limits, if any, on the number of new connections (i.e. missed packets)  initiated.
+		setOvsPortMissPktsInfo(interfaceData.bridge, portName, interfaceName, interfaceInfo.Status["driver_name"])
+		// set SR-IOV interface stats.
+		setSriovInterfaceStatsViaEthtool(etHandler, interfaceData.bridge, portName, interfaceName, interfaceInfo.Status["driver_name"])
+>>>>>>> b47f8f274 (update)
 	}
 
 	var linkReset, rxDropped, txDropped, rxErr, txErr, collisions, statValue float64
@@ -613,6 +968,7 @@ func ovsMemoryMetricsUpdater(ovsVswitchdAppctl ovsClient, metricsScrapeInterval 
 	for {
 		select {
 		case <-ticker.C:
+			klog.Infof("XXXXX ovsMemoryMetricsUpdater")
 			if err := setOvsMemoryMetrics(ovsVswitchdAppctl); err != nil {
 				klog.Errorf("Setting ovs memory metrics failed: %s", err.Error())
 			}
@@ -660,6 +1016,7 @@ func ovsHwOffloadMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrape
 	for {
 		select {
 		case <-ticker.C:
+			klog.Infof("XXXXX ovsHwOffloadMetricsUpdater")
 			if err := setOvsHwOffloadMetrics(ovsDBClient); err != nil {
 				klog.Errorf("Setting ovs hardware offload metrics failed: %s", err.Error())
 			}
@@ -669,6 +1026,156 @@ func ovsHwOffloadMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrape
 	}
 }
 
+<<<<<<< HEAD
+=======
+type ovsInterfaceMetricsDetails struct {
+	help   string
+	metric *prometheus.GaugeVec
+}
+
+var ovsInterfaceExtraMetricsDataMap = map[string]*ovsInterfaceMetricsDetails{
+	"interface_tx_misspkts_packets_drops": {
+		help: "Represents the number of new connection packets dropped " +
+			"by the hardware.",
+	},
+	"interface_tx_misspkts_pps": {
+		help: "Maximum rate of allowed new connections on OVS interface, " +
+			"in pps. If the value is 0, then rate is disabled.",
+	},
+	"interface_tx_misspkts_burst": {
+		help: "Maximum burst size of allowed new connections on OVS interface, " +
+			"in pps.",
+	},
+	"interface_ingress_qdisc_total": {
+		help: "Denotes the total ingress filters on the device",
+	},
+	// stats from ethtool -S
+	"interface_tx_sw_bytes": {
+		help: "Sent bytes via software OVS path",
+	},
+	"interface_tx_total_bytes": {
+		help: "Sent bytes in total via net interface",
+	},
+	"interface_tx_sw_packets": {
+		help: "Sent packets via software OVS path",
+	},
+	"interface_tx_total_packets": {
+		help: "Sent packets in total via net interface",
+	},
+	"interface_rx_sw_bytes": {
+		help: "Received bytes via software OVS path",
+	},
+	"interface_rx_total_bytes": {
+		help: "Received bytes in total via net interface",
+	},
+	"interface_rx_sw_packets": {
+		help: "Received packets via software OVS path",
+	},
+	"interface_rx_total_packets": {
+		help: "Received packets in total via net interface",
+	},
+	// genev_sys_6081 emits below ovs interface metrics based on
+	// `ip -s li show genev_sys_6081` output
+	// note that, label bridge and port are set to 'none' for genev_sys_6081
+	"interface_link_state": {
+		help: "The link state of the OVS interface. " +
+			"The values are: down(1) or up(2) or other(0).",
+	},
+	"interface_mtu": {
+		help: "The currently configured MTU for OVS interface.",
+	},
+	"interface_ifindex": {
+		help: "Represents the interface index associated with OVS interface.",
+	},
+	"interface_xxxxxxxxxxx": {
+		help: "Represents the interface index associated with OVS interface.",
+	},
+	"interface_rx_packets": {
+		help: "Represents the number of received packets " +
+			"by OVS interface.",
+	},
+	"interface_rx_bytes": {
+		help: "Represents the number of received bytes by " +
+			"OVS interface.",
+	},
+	"interface_rx_dropped": {
+		help: "Represents the number of input packets dropped " +
+			"by OVS interface.",
+	},
+	"interface_rx_frame_err": {
+		help: "Represents the number of frame alignment errors " +
+			"on the packets received by OVS interface.",
+	},
+	"interface_rx_over_err": {
+		help: "Represents the number of packets with RX overrun " +
+			"received by OVS interface.",
+	},
+	"interface_rx_crc_err": {
+		help: "Represents the number of CRC errors for the packets " +
+			"received by OVS interface.",
+	},
+	"interface_rx_errors": {
+		help: "Represents the total number of packets with errors " +
+			"received by OVS interface.",
+	},
+	"interface_tx_packets": {
+		help: "Represents the number of transmitted packets by " +
+			"OVS interface.",
+	},
+	"interface_tx_bytes": {
+		help: "Represents the number of transmitted bytes " +
+			"by OVS interface.",
+	},
+	"interface_tx_dropped": {
+		help: "Represents the number of output packets dropped " +
+			"by OVS interface.",
+	},
+	"interface_collisions": {
+		help: "Represents the number of collisions " +
+			"on the packets transmitted by OVS interface.",
+	},
+	"interface_tx_errors": {
+		help: "Represents the total number of packets with errors " +
+			"transmitted by OVS interface.",
+	},
+}
+
+var ovsInterfaceMetricsDataMap = map[string]*ovsInterfaceMetricsDetails{
+	// Not adding bytes currently, as the packets stats should suffice for
+	// this metric.
+	"interface_ingress_policing_rate": {
+		help: "Maximum rate for data received on OVS interface, " +
+			"in kbps. If the value is 0, then policing is disabled.",
+	},
+	"interface_ingress_policing_burst": {
+		help: "Maximum burst size for data received on OVS interface, " +
+			"in kb. The default burst size if set to 0 is 8000 kbit.",
+	},
+	"interface_admin_state": {
+		help: "The administrative state of the OVS interface. " +
+			"The values are: other(0), down(1) or up(2).",
+	},
+	"interface_type": {
+		help: "Represents the interface type other(0), system(1), internal(2), " +
+			"tap(3), geneve(4), gre(5), vxlan(6), lisp(7), stt(8), patch(9).",
+	},
+	"interface_of_port": {
+		help: "Represents the OpenFlow port ID associated with OVS interface.",
+	},
+	"interface_duplex": {
+		help: "The duplex mode of the OVS interface. The values are half(0) " +
+			"or full(1) or other(2)",
+	},
+	"interface_link_speed": {
+		help: "The negotiated speed of the OVS interface.",
+	},
+	"interface_link_resets": {
+		help: "The number of times Open vSwitch has observed the " +
+			"link_state of OVS interface change.",
+	},
+}
+
+>>>>>>> b47f8f274 (update)
 var ovsVswitchdCoverageShowMetricsMap = map[string]*metricDetails{
 	"netlink_sent": {
 		help: "Number of netlink message sent to the kernel.",
@@ -834,6 +1341,7 @@ var ovsVswitchdCoverageShowMetricsMap = map[string]*metricDetails{
 }
 var registerOvsMetricsOnce sync.Once
 
+<<<<<<< HEAD
 func RegisterStandaloneOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
 	registerOvsMetrics(ovsDBClient, metricsScrapeInterval, prometheus.DefaultRegisterer, stopChan)
 }
@@ -843,6 +1351,19 @@ func RegisterOvsMetricsWithOvnMetrics(ovsDBClient libovsdbclient.Client, metrics
 }
 
 func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, registry prometheus.Registerer, stopChan <-chan struct{}) {
+=======
+func RegisterOvsMetrics(nodeName string, ovsDBClient libovsdbclient.Client,
+	metricsScrapeInterval int, stopChan <-chan struct{}) {
+	if config.Default.EnableOvsNativeMetrics {
+		klog.Infof("XXXXX RegisterOvsMetrics: OVS native metrics are enabled")
+		// When OVS native metrics are enabled, only need to register the additional metrics
+		// which are not covered by the OVS native metrics
+		RegisterAdditionalOvsMetrics()
+		return
+	}
+
+	klog.Infof("XXXXX RegisterOvsMetrics: OVS native metrics is disabled")
+>>>>>>> b47f8f274 (update)
 	registerOvsMetricsOnce.Do(func() {
 		getOvsVersionInfo(ovsDBClient)
 		registry.MustRegister(prometheus.NewGaugeFunc(
@@ -891,7 +1412,10 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		registry.MustRegister(MetricOvsInterfaceUpWait)
 		// Register the OVS coverage/show metrics
 		componentCoverageShowMetricsMap[ovsVswitchd] = ovsVswitchdCoverageShowMetricsMap
-		registerCoverageShowMetrics(ovsVswitchd, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
+		registerCoverageShowMetrics(ovsVswitchd, MetricOvsNamespace, MetricOvsSubsystemVswitchd)
+
+		// OVS version updater
+		go OvsVersionInfoUpdater(ovsDBClient, nodeName, metricsScrapeInterval, stopChan)
 
 		// When ovnkube-node is running in privileged mode, the hostPID will be set to true,
 		// and therefore it can monitor OVS running on the host using PID.

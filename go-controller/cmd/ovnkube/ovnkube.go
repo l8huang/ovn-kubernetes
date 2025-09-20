@@ -308,8 +308,30 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	// Start metric server for master and node. Expose the metrics HTTP endpoint if configured.
 	// Non LE master instances also are required to expose the metrics server.
 	if config.Metrics.BindAddress != "" {
+<<<<<<< HEAD
 		metrics.StartMetricsServer(config.Metrics.BindAddress, config.Metrics.EnablePprof,
 			config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), ovnKubeStartWg)
+=======
+		pprofBindAddress := ""
+		if runMode.node {
+			// ovnk8s node mode
+			if config.Metrics.EnablePprof {
+				pprofBindAddress = "127.0.0.1:19410"
+			}
+			if err := metrics.StartOVNMetricsServer(config.Metrics.BindAddress, pprofBindAddress,
+				config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), ovnKubeStartWg,
+				runMode.identity); err != nil {
+				return err
+			}
+		} else {
+			if config.Metrics.EnablePprof {
+				pprofBindAddress = "127.0.0.1:19409"
+			}
+			// serve ovnkube controller metrics
+			metrics.StartMetricsServer(config.Metrics.BindAddress, pprofBindAddress,
+				config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), ovnKubeStartWg)
+		}
+>>>>>>> b47f8f274 (update)
 	}
 
 	// no need for leader election in node mode

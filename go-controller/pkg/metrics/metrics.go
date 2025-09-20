@@ -27,6 +27,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -191,6 +192,35 @@ func ovnKubeLogFileSizeMetricsUpdater(ovnKubeLogFileMetric *prometheus.GaugeVec,
 	}
 }
 
+func setCoverageShowMetric(component string) {
+	klog.Infof("XXXXX Setting coverage/show metrics for %s", component)
+	coverageShowOutputMap, err := getCoverageShowOutputMap(component)
+	if err != nil {
+		klog.Errorf("Getting coverage/show metrics for %s failed: %s", component, err.Error())
+		return
+	}
+	coverageShowMetricsMap := componentCoverageShowMetricsMap[component]
+	for metricName, metricInfo := range coverageShowMetricsMap {
+		var metricValue float64
+		if metricInfo.srcName != "" {
+			metricName = metricInfo.srcName
+		}
+		if metricInfo.aggregateFrom != nil {
+			for _, aggregateMetricName := range metricInfo.aggregateFrom {
+				if value, ok := coverageShowOutputMap[aggregateMetricName]; ok {
+					metricValue += parseMetricToFloat(component, aggregateMetricName, value)
+				}
+			}
+		} else {
+			if value, ok := coverageShowOutputMap[metricName]; ok {
+				metricValue = parseMetricToFloat(component, metricName, value)
+			}
+		}
+		metricInfo.metric.Set(metricValue)
+	}
+
+}
+
 // coverageShowMetricsUpdater updates the metric by obtaining values from
 // getCoverageShowOutputMap for specified component. The counters displayed
 // by coverage/show output are called events. It could be that the event never
@@ -202,30 +232,8 @@ func coverageShowMetricsUpdater(component string, stopChan <-chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			coverageShowOutputMap, err := getCoverageShowOutputMap(component)
-			if err != nil {
-				klog.Errorf("Getting coverage/show metrics for %s failed: %s", component, err.Error())
-				continue
-			}
-			coverageShowMetricsMap := componentCoverageShowMetricsMap[component]
-			for metricName, metricInfo := range coverageShowMetricsMap {
-				var metricValue float64
-				if metricInfo.srcName != "" {
-					metricName = metricInfo.srcName
-				}
-				if metricInfo.aggregateFrom != nil {
-					for _, aggregateMetricName := range metricInfo.aggregateFrom {
-						if value, ok := coverageShowOutputMap[aggregateMetricName]; ok {
-							metricValue += parseMetricToFloat(component, aggregateMetricName, value)
-						}
-					}
-				} else {
-					if value, ok := coverageShowOutputMap[metricName]; ok {
-						metricValue = parseMetricToFloat(component, metricName, value)
-					}
-				}
-				metricInfo.metric.Set(metricValue)
-			}
+			klog.Infof("XXXXX coverageShowMetricsUpdater")
+			setCoverageShowMetric(component)
 		case <-stopChan:
 			return
 		}
@@ -506,12 +514,39 @@ func StartMetricsServer(bindAddress string, enablePprof bool, certFile string, k
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
+<<<<<<< HEAD
 	if enablePprof {
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+=======
+// StartOVNMetricsServer runs the prometheus listener so that OVN metrics can be collected
+func StartOVNMetricsServer(bindAddress, pprofBindAddress, certFile, keyFile string,
+	stopChan <-chan struct{}, wg *sync.WaitGroup, nodeName string) error {
+
+	if config.Default.EnableOvsNativeMetrics {
+		klog.Infof("XXXXX Starting OVS native metrics server at address %q", bindAddress)
+		ovsDBClient, err := libovsdb.NewOVSClient(stopChan)
+		if err != nil {
+			return fmt.Errorf("error when trying to initialize ovsdb client: %v", err)
+		}
+
+		ovsMetricsHandler := &ovsNativeMetricsHandler{
+			ovsDBClient: ovsDBClient,
+			nodeName:    nodeName,
+		}
+		metricsHandler := promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, http.HandlerFunc(ovsMetricsHandler.handleMetircsRequest))
+		startMetricsServer(bindAddress, pprofBindAddress, certFile, keyFile, metricsHandler, stopChan, wg)
+	} else {
+		klog.Infof("XXXXX Starting OVS metrics server at address %q", bindAddress)
+		startMetricsServer(bindAddress, pprofBindAddress, certFile, keyFile, promhttp.Handler(), stopChan, wg)
+	}
+
+	return nil
+}
+>>>>>>> b47f8f274 (update)
 
 		// Allow changes to log level at runtime
 		mux.HandleFunc("/debug/flags/v", stringFlagPutHandler(klogSetter))

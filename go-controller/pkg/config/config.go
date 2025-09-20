@@ -78,6 +78,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		EnableOvsNativeMetrics:       false,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -297,6 +298,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// Collect OVS native metrics from `metrics/show` output.
+	EnableOvsNativeMetrics bool `gcfg:"enable-ovs-native-metrics"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -980,6 +984,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-ovs-native-metrics",
+		Usage:       "Collect OVS native metrics from `metrics/show` output.",
+		Destination: &cliConfig.Default.EnableOvsNativeMetrics,
+		Value:       Default.EnableOvsNativeMetrics,
 	},
 }
 

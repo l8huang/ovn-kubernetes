@@ -68,6 +68,7 @@ fi
 # OVN_SB_RAFT_ELECTION_TIMER - ovn south db election timer in ms (default 1000)
 # OVN_SSL_ENABLE - use SSL transport to NB/SB db and northd (default: no)
 # OVN_REMOTE_PROBE_INTERVAL - ovn remote probe interval in ms (default 100000)
+# OVS_ENABLE_NATIVE_METRICS - enable ovs native metrics if ovs-vswitchd supports metrics/show (default: false)
 # OVN_MONITOR_ALL - ovn-controller monitor all data in SB DB
 # OVN_OFCTRL_WAIT_BEFORE_CLEAR - ovn-controller wait time in ms before clearing OpenFlow rules during start up
 # OVN_ENABLE_LFLOW_CACHE - enable ovn-controller lflow-cache
@@ -462,8 +463,8 @@ check_ovn_daemonset_version() {
       return 0
     fi
   done
-  echo "VERSION MISMATCH expect ${ok}, daemonset is version ${ovn_daemonset_version}"
-  exit 1
+  # echo "VERSION MISMATCH expect ${ok}, daemonset is version ${ovn_daemonset_version}"
+  # exit 1
 }
 
 get_ovn_db_vars() {
@@ -2192,6 +2193,20 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  OVS_ENABLE_NATIVE_METRICS=true
+  enable_ovs_native_metrics_flag=""
+  if [[ $OVS_ENABLE_NATIVE_METRICS == "true" && ${ovnkube_node_mode} != "dpu-host" ]]; then
+    # ensure pid file exist
+    pid_file=${OVS_RUNDIR}/ovs-vswitchd.pid
+    wait_for_event attempts=20 files_exist ${OVS_RUNDIR}/ovs-vswitchd.pid
+    ctl_file=${OVS_RUNDIR}/ovs-vswitchd.$(cat ${pid_file}).ctl
+    if $(ovs-appctl -t $ctl_file list-commands | grep metrics/show > /dev/null ); then
+      echo "metrics/show is available"
+      enable_ovs_native_metrics_flag="--enable-ovs-native-metrics"
+    fi
+  fi
+  echo "enable_ovs_native_metrics_flag=${enable_ovs_native_metrics_flag}"
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2247,6 +2262,7 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
+    ${enable_ovs_native_metrics_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \

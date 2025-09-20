@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -589,6 +590,38 @@ func RunOvsVswitchdAppCtl(args ...string) (string, string, error) {
 	cmdArgs = []string{
 		"-t",
 		savedOVSRunDir + fmt.Sprintf("ovs-vswitchd.%s.ctl", pid),
+	}
+	cmdArgs = append(cmdArgs, args...)
+	stdout, stderr, err := runOVNretry(runner.appctlPath, nil, cmdArgs...)
+	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
+}
+
+func RunOvsVswitchdAppCtlMetricsShow() (*bytes.Buffer, *bytes.Buffer, error) {
+	var cmdArgs []string
+	pid, err := GetOvsVSwitchdPID()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmdArgs = []string{
+		"-t",
+		savedOVSRunDir + fmt.Sprintf("ovs-vswitchd.%s.ctl", pid),
+	}
+	cmdArgs = append(cmdArgs, "metrics/show")
+
+	stdout, stderr, err := runWithEnvVars(runner.appctlPath, nil, cmdArgs...)
+	return stdout, stderr, err
+}
+
+// RunOvsDbServerAppCtl runs an 'ovs-appctl -t /var/run/openvswitch/ovsdb-server.pid.ctl command'
+func RunOvsDbServerAppCtl(args ...string) (string, string, error) {
+	var cmdArgs []string
+	pid, err := os.ReadFile(savedOVSRunDir + "ovsdb-server.pid")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get ovsdb-server pid : %v", err)
+	}
+	cmdArgs = []string{
+		"-t",
+		savedOVSRunDir + fmt.Sprintf("ovsdb-server.%s.ctl", strings.TrimSpace(string(pid))),
 	}
 	cmdArgs = append(cmdArgs, args...)
 	stdout, stderr, err := runOVNretry(runner.appctlPath, nil, cmdArgs...)

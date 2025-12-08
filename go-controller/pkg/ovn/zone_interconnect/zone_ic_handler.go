@@ -551,6 +551,7 @@ func (zic *ZoneInterconnectHandler) EnsureLocalNodeTransitSwitchPortForPod(pod *
 		return nil
 	}
 
+	klog.Infof("XXXXX EnsureLocalNodeTransitSwitchPortForPod: pod %s/%s, node %s, network %s", pod.Namespace, pod.Name, node.Name, zic.GetNetworkName())
 	nodeID, err := util.GetNodeID(node)
 	if err != nil || nodeID == util.InvalidNodeID {
 		return fmt.Errorf("failed to get node ID for node %s: %w", node.Name, err)
@@ -747,9 +748,11 @@ func (zic *ZoneInterconnectHandler) EnsureRemoteNodeTransitSwitchPortForPod(pod 
 
 	if len(encapIPs) <= 1 {
 		// Single-VTEP node, port already created during node initialization
+		klog.Infof("XXXXX EnsureRemoteNodeTransitSwitchPortForPod: skip single-VTEP node %s, network %s", node.Name, zic.GetNetworkName())
 		return nil
 	}
 
+	klog.Infof("XXXXX EnsureRemoteNodeTransitSwitchPortForPod: pod %s/%s, multi-VTEP node %s, network %s", pod.Namespace, pod.Name, node.Name, zic.GetNetworkName())
 	nodeID, err := util.GetNodeID(node)
 	if err != nil || nodeID == util.InvalidNodeID {
 		return fmt.Errorf("failed to get node ID for node %s: %w", node.Name, err)
@@ -979,7 +982,6 @@ func (zic *ZoneInterconnectHandler) addNodeLogicalSwitchPort(logicalSwitchName, 
 func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 	klog.Infof("Cleaning up interconnect resources for the node %s for the network %s", nodeName, zic.GetNetworkName())
 
-	// TODO: need to clean all the transit switch ports for the stale node in case of multi-VTEP
 	// Cleanup the logical router port in the cluster router for the node
 	// if it exists.
 	if err := zic.cleanupNodeClusterRouterPort(nodeName); err != nil {

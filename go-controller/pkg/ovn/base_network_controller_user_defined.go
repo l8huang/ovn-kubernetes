@@ -403,14 +403,16 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	txOkCallBack()
 
 	// For Layer 3 interconnect with multi-VTEP, ensure transit switch port exists for this pod's encap IP
-	if isLocalPod && bsnc.isLayer3Interconnect() && podAnnotation.EncapIP != "" {
+	if isLocalPod && bsnc.isLayer3Interconnect() /* && podAnnotation.EncapIP != "" */ {
+		klog.Infof("Ensuring transit switch port for local pod %s/%s in network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
 		if err = bsnc.zoneICHandler.EnsureLocalNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
 			return fmt.Errorf("failed to ensure transit switch port for local pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
 	// For Layer 3 interconnect with multi-VTEP, ensure remote transit switch port exists for this pod's encap IP
-	if !isLocalPod && bsnc.isLayer3Interconnect() && podAnnotation.EncapIP != "" {
+	if !isLocalPod && bsnc.isLayer3Interconnect() /* && podAnnotation.EncapIP != "" */ {
+		klog.Infof("Ensuring transit switch port for remote pod %s/%s in network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
 		if err = bsnc.zoneICHandler.EnsureRemoteNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
 			return fmt.Errorf("failed to ensure remote transit switch port for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
@@ -418,6 +420,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	// set remote layer 2 LSP's Port Binding's encap field according to encap ip in the pod annotation
 	if !isLocalPod && bsnc.isLayer2Interconnect() && podAnnotation.EncapIP != "" {
+		klog.Infof("Ensuring port binding for remote pod %s/%s in network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
 		nodeObj, err := bsnc.watchFactory.GetNode(pod.Spec.NodeName)
 		if err != nil {
 			return fmt.Errorf("failed to fetch node %s: %w", pod.Spec.NodeName, err)

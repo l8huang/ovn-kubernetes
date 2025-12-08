@@ -147,7 +147,10 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 		return oc.ensureLocalZonePod(oldPod, pod, addPort)
 	}
 
-	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
+	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in network %s node %s", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
+	defer func() {
+		klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in network %s node %s  -- DONE", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
+	}()
 	return oc.ensureRemoteZonePod(oldPod, pod, addPort)
 }
 
@@ -175,6 +178,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}
 	}
 
+	klog.Infof("XXXXX ensureLocalZonePod: pod %s/%s, addPort %t", pod.Namespace, pod.Name, addPort)
 	if !util.PodWantsHostNetwork(pod) && addPort {
 		if err := oc.addLogicalPort(pod); err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
@@ -236,6 +240,16 @@ func (oc *DefaultNetworkController) ensureRemotePodIP(oldPod, pod *corev1.Pod, a
 func (oc *DefaultNetworkController) ensureRemoteZonePod(oldPod, pod *corev1.Pod, addPort bool) error {
 	if err := oc.ensureRemotePodIP(oldPod, pod, addPort); err != nil {
 		return err
+	}
+
+	// For Layer 3 interconnect with multi-VTEP, ensure remote transit switch port exists for this pod's encap IP
+	if oc.isLayer3Interconnect() {
+		podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
+		if err == nil {
+			if err = oc.zoneICHandler.EnsureRemoteNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
+				return fmt.Errorf("failed to ensure remote transit switch port for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			}
+		}
 	}
 
 	//FIXME: Update comments & reduce code duplication.

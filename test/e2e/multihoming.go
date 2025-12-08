@@ -947,7 +947,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				},
 			),
 			Entry(
-				"can communicate over an L3 - routed - secondary network",
+				"can communicate over an L3 - routed - secondary network x",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "layer3",

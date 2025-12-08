@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -54,12 +55,14 @@ func UpdatePortBindingSetEncap(sbClient libovsdbclient.Client, lspName, chassisN
 		return err
 	}
 
+	klog.Infof("XXXX UpdatePortBindingSetEncap: found local LSP %s", lspName)
 	pb := &sbdb.PortBinding{
 		LogicalPort: lspName,
 	}
 	if err = doUpdatePortBindingSetEncap(sbClient, pb, encap); err != nil {
 		return fmt.Errorf("failed to update port binding for %s: %w", lspName, err)
 	}
+	klog.Infof("XXXX UpdatePortBindingSetEncap: set local LSP %s with encap %s done", lspName, encapIP)
 
 	return nil
 }

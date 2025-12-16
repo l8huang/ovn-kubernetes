@@ -503,7 +503,6 @@ enable_multi_net() {
 
 enable_multi_vtep() {
   echo "add second VTEP interface to nodes"
-  subnetv4=`docker network inspect kind --format '{{ range .IPAM.Config }}{{ .Subnet }}{{ printf "\n" }}{{ end }}' | grep -v ":" | head -n 1 | xargs echo`
 
   KIND_NODES=$(kind_get_nodes)
   # e2e test case could create docker containers, the IP_OFFSET should be large enough to avoid collision
@@ -515,15 +514,16 @@ enable_multi_vtep() {
     veth_cont="veth`openssl rand -hex 4`"
     ns_cont=`"$OCI_BIN" inspect -f '{{ .State.Pid }}' $n`
     bridge=`"$OCI_BIN" network inspect kind --format 'br-{{.Id}}' | cut -c1-15`
+    eth0_ip=`sudo nsenter -t $ns_cont -n ip -br addr show dev eth0  | awk '{print $3}' | cut -d '/' -f 1`
     sudo ip link add $veth_host type veth peer name $veth_cont
     sudo ip link set $veth_cont netns $ns_cont
     sudo ip link set $veth_host master $bridge
     sudo ip link set $veth_host up
 
-    addrv4=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$subnetv4', strict=False); print(f'{n.network_address + $IP_OFFSET}/{n.prefixlen}')")
+    vtep1_ip=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$eth0_ip', strict=False); print(f'{n.network_address + $IP_OFFSET}/{n.prefixlen}')")
     sudo nsenter -t $ns_cont -n ip link set $veth_cont name vtep1
     sudo nsenter -t $ns_cont -n ip link set vtep1 up
-    sudo nsenter -t $ns_cont -n ip addr add $addrv4 dev vtep1 noprefixroute
+    sudo nsenter -t $ns_cont -n ip addr add $vtep1_ip dev vtep1 noprefixroute
   done
 }
 

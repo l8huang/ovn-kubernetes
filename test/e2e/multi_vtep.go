@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
@@ -16,6 +17,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -36,10 +38,14 @@ type MultiVtepNode struct {
 
 var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 	const (
-		clientPodName  = "client-pod"
+		clientPod1Name = "client-pod-1"
+		clientPod2Name = "client-pod-2"
 		serverPod1Name = "server-pod-1"
 		serverPod2Name = "server-pod-2"
 		port           = 9000
+
+		defaultNetworkName = "default"
+		primaryNetworkName = "tenant-red"
 
 		secondaryNetworkCIDR       = "172.31.0.0/16" // last subnet in private range 172.16.0.0/12 (rfc1918)
 		secondaryNetworkName       = "tenant-blue"
@@ -85,9 +91,141 @@ var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 
 	})
 
+	Context("Pods XXXX", func() {
+
+		DescribeTableSubtree("using network",
+			func(createNetworkFn func(podConfigs []podConfiguration) string) {
+
+				f.SkipNamespaceCreation = true
+
+				DescribeTable("can communicate", func(podConfigs []podConfiguration, clientPodName string, serverPodName string) {
+					networkName := createNetworkFn(podConfigs)
+					framework.Logf("namespace %s", f.Namespace.Name)
+
+					By("updating client and server Pod config configurations")
+					podConfigByName := map[string]podConfiguration{}
+					for _, podConfig := range podConfigs {
+						podConfig.namespace = f.Namespace.Name
+						encapIp := multiVtepNodes[podConfig.nodeIndex].EncapIPs[podConfig.vtepIndex]
+						podConfig.annotations = map[string]string{
+							networkEncapIPMappingAnnotation: fmt.Sprintf(`{"%s":"%s"}`, networkName, encapIp),
+						}
+						podConfig.nodeSelector = map[string]string{nodeHostnameKey: multiVtepNodes[podConfig.nodeIndex].Node.Name}
+						podConfigByName[podConfig.name] = podConfig
+					}
+
+					By("instantiating the pods")
+					podByName := map[string]*v1.Pod{}
+					for _, pc := range podConfigByName {
+						pod, err := cs.CoreV1().Pods(pc.namespace).Create(
+							context.Background(),
+							generatePodSpec(pc),
+							metav1.CreateOptions{},
+						)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(pod).NotTo(BeNil())
+						podByName[pod.Name] = pod
+					}
+
+				},
+					Entry("over 1st VTEP",
+						[]podConfiguration{
+							{
+								name:      clientPod1Name,
+								vtepIndex: 0,
+								nodeIndex: 0,
+							},
+							{
+								name:         serverPod1Name,
+								containerCmd: httpServerContainerCmd(port),
+								vtepIndex:    0,
+								nodeIndex:    1,
+							},
+						},
+						clientPod1Name,
+						serverPod1Name,
+					))
+
+			},
+			Entry("default network ", func(podConfigs []podConfiguration) string {
+				framework.Logf("Creating default network")
+				namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+					"e2e-framework": f.BaseName,
+				})
+				Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+				f.Namespace = namespace
+				return defaultNetworkName
+			}),
+
+			Entry("primary network ", func(podConfigs []podConfiguration) string {
+				framework.Logf("Creating primary network")
+				namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
+				Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+				f.Namespace = namespace
+				netConfigParams := networkAttachmentConfigParams{
+					name:     primaryNetworkName,
+					topology: types.Layer3Topology,
+					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+					role:     "primary",
+				}
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				By("creating the primary network")
+				_, err = nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
+					context.Background(),
+					generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("attatch Pod to primary network")
+				for _, podConfig := range podConfigs {
+					podConfig.attachments = []nadapi.NetworkSelectionElement{{Name: netConfigParams.name}}
+					framework.Logf("XXXXX podConfig: %+v", podConfig)
+				}
+
+				return primaryNetworkName
+			}),
+
+			Entry("secondary network ", func(podConfigs []podConfiguration) string {
+				framework.Logf("Creating secondary network")
+				namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+					"e2e-framework": f.BaseName,
+				})
+				Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+				f.Namespace = namespace
+
+				netConfigParams := networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "layer3",
+					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+				}
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				By("creating the secondary network")
+				_, err = nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
+					context.Background(),
+					generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("attatch Pod to secondary network")
+				for _, podConfig := range podConfigs {
+					podConfig.attachments = []nadapi.NetworkSelectionElement{{Name: netConfigParams.name}}
+				}
+
+				return secondaryNetworkName
+			}),
+		)
+	})
+
 	Context("Pods with an OVN-K secondary network", func() {
 
-		DescribeTable("can communicate over 2nd VTEP", func(netConfigParams networkAttachmentConfigParams, podConfigs []podConfiguration, clientPodName string, serverPodName string) {
+		DescribeTable("can communicate", func(netConfigParams networkAttachmentConfigParams, podConfigs []podConfiguration, clientPodName string, serverPodName string) {
 			netConfig := newNetworkAttachmentConfig(netConfigParams)
 			netConfig.namespace = f.Namespace.Name
 			By("creating the attachment configuration")
@@ -170,16 +308,26 @@ var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 			for _, iface := range vtepInterfaces {
 				outputFile := fmt.Sprintf("/tmp/%s-%s.txt", f.Namespace.Name, iface)
 				tcpdumpOutputFiles[iface] = outputFile
+				framework.Logf("Starting tcpdump on node %s interface %s, writing to %s", serverNodeName, iface, outputFile)
 				// Start tcpdump in background with nohup to survive shell exit, timeout to auto-terminate
-				tcpdumpCmd := fmt.Sprintf("nohup timeout 300 tcpdump -l -i %s -nne 'geneve and host %s' > %s 2>&1 &", iface, serverIP, outputFile)
+				tcpdumpCmd := fmt.Sprintf("nohup timeout 300 tcpdump -l -i %s -nne 'geneve and host %s' > %s 2>/dev/null &", iface, serverIP, outputFile)
 				_, err := ovnkubeNodeExecutor.Exec("sh", "-c", tcpdumpCmd)
 				if err != nil {
 					GinkgoT().Logf("Warning: failed to start tcpdump on %s: %v", iface, err)
 				}
 			}
+			DeferCleanup(func() {
+				if framework.TestContext.DeleteNamespace {
+					args := []string{"-f"}
+					for _, outputFile := range tcpdumpOutputFiles {
+						args = append(args, outputFile)
+					}
+					_, _ = ovnkubeNodeExecutor.Exec("rm", args...)
+				}
+			})
 
-			// Wait for tcpdump to start
-			time.Sleep(300 * time.Second)
+			framework.Logf("Give tcpdump 5 seconds to start")
+			time.Sleep(5 * time.Second)
 
 			By("asserting the client pod can contact the server pod")
 			Eventually(func() error {
@@ -189,32 +337,29 @@ var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 			By("stopping tcpdump and verifying packets on expected VTEP interface")
 			// Wait for packets to be captured and flushed to file
 			time.Sleep(3 * time.Second)
-			// Kill tcpdump processes
-			_, _ = ovnkubeNodeExecutor.Exec("sh", "-c", "pkill -f tcpdump || true")
+			// stop tcpdump processes
+			_, _ = ovnkubeNodeExecutor.Exec("sh", "-c", "pkill -15 -f tcpdump || true")
 			time.Sleep(1 * time.Second)
 
 			// Check packet counts on each interface by counting lines in output files
 			for iface, outputFile := range tcpdumpOutputFiles {
-				countCmd := fmt.Sprintf("wc -l < %s 2>/dev/null || echo 0", outputFile)
-				output, err := ovnkubeNodeExecutor.Exec("sh", "-c", countCmd)
+				countPacketsCmd := fmt.Sprintf("grep Geneve %s | wc -l || echo 0", outputFile)
+				output, err := ovnkubeNodeExecutor.Exec("sh", "-c", countPacketsCmd)
 				if err != nil {
 					GinkgoT().Logf("Warning: failed to read output for %s: %v", iface, err)
 					continue
 				}
 				count, _ := strconv.Atoi(strings.TrimSpace(output))
-				GinkgoT().Logf("VTEP interface %s: %d packets captured", iface, count)
+				GinkgoT().Logf("VTEP interface %s captured %d packets ", iface, count)
 
 				if iface == expectedVtepInterface {
 					Expect(count).To(BeNumerically(">", 0), "expected packets on VTEP interface %s but got none", iface)
 				} else {
 					Expect(count).To(Equal(0), "unexpected packets on VTEP interface %s", iface)
 				}
-
-				// Cleanup output file
-				_, _ = ovnkubeNodeExecutor.Exec("rm", "-f", outputFile)
 			}
 		},
-			Entry("when attaching to L3 network over 1nd VTEP",
+			Entry("when attaching to L3 network over 1st VTEP",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "layer3",
@@ -222,7 +367,7 @@ var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 				},
 				[]podConfiguration{
 					{
-						name:        clientPodName,
+						name:        clientPod1Name,
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 						vtepIndex:   0,
 						nodeIndex:   0,
@@ -235,7 +380,31 @@ var _ = Describe("Multi VTEP", feature.MultiVTEP, func() {
 						nodeIndex:    1,
 					},
 				},
-				clientPodName,
+				clientPod1Name,
+				serverPod1Name),
+
+			Entry("when attaching to L3 network over 2nd VTEP",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "layer3",
+					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+				},
+				[]podConfiguration{
+					{
+						name:        clientPod1Name,
+						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						vtepIndex:   1,
+						nodeIndex:   0,
+					},
+					{
+						name:         serverPod1Name,
+						attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						containerCmd: httpServerContainerCmd(port),
+						vtepIndex:    1,
+						nodeIndex:    1,
+					},
+				},
+				clientPod1Name,
 				serverPod1Name),
 		)
 	})

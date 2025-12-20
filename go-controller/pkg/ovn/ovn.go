@@ -147,9 +147,9 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 		return oc.ensureLocalZonePod(oldPod, pod, addPort)
 	}
 
-	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in network %s node %s", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
+	klog.Infof("Ensuring zone remote for Pod %s/%s in network %s node %s", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
 	defer func() {
-		klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in network %s node %s  -- DONE", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
+		klog.Infof("Ensuring zone remote for Pod %s/%s in network %s node %s  -- DONE", pod.Namespace, pod.Name, oc.GetNetworkName(), pod.Spec.NodeName)
 	}()
 	return oc.ensureRemoteZonePod(oldPod, pod, addPort)
 }

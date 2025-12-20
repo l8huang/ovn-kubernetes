@@ -151,10 +151,12 @@ func (pr *PodRequest) ensureNetworkEncapIP(clientset *ClientSet, pod *corev1.Pod
 	if encapIPMapping != nil {
 		klog.Infof("XXXXX ensureNetworkEncapIP: netName %s, nadName %s, encapIPMapping %v", pr.netName, pr.nadName, encapIPMapping)
 		// the nadName could be "defaut" or "[namespace]/[nadName]"
+		netName := pr.netName
 		tokens := strings.Split(pr.nadName, "/")
 		if len(tokens) > 1 {
-			encapIP, _ = encapIPMapping[tokens[len(tokens)-1]]
+			netName = tokens[len(tokens)-1]
 		}
+		encapIP, _ = encapIPMapping[netName]
 	}
 
 	if pr.CNIConf.DeviceID != "" &&

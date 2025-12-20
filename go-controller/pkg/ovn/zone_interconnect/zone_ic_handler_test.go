@@ -1447,6 +1447,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 					expectedResources = t.expectedAfterDeletePods
 				}
 
+				DumpOvnDBData(libovsdbOvnNBClient, libovsdbOvnSBClient)
 				err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName,
 					expectedResources.TransitSwitchPorts,
 					expectedResources.LogicalRouterPorts,
@@ -1655,3 +1656,74 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 	})
 
 })
+
+func DumpOvnDBData(nbClient libovsdbclient.Client, sbClient libovsdbclient.Client) error {
+	// Dump Northbound Database data
+	ginkgo.By("=== Northbound Database ===")
+	var nbLogicalSwitches []*nbdb.LogicalSwitch
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalSwitches)).To(gomega.Succeed())
+
+	fmt.Printf("--- Logical Routers ---\n")
+	var nbLogicalRouters []*nbdb.LogicalRouter
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalRouters)).To(gomega.Succeed())
+	for i, lr := range nbLogicalRouters {
+		fmt.Printf("LR[%d]: Name=%s, UUID=%s, ExternalIDs=%+v\n", i, lr.Name, lr.UUID, lr.ExternalIDs)
+	}
+	fmt.Printf("--- Logical Routers Ports ---\n")
+	var nbLogicalRouterPorts []*nbdb.LogicalRouterPort
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalRouterPorts)).To(gomega.Succeed())
+	for i, lrp := range nbLogicalRouterPorts {
+		fmt.Printf("LRP[%d]: Name=%s, UUID=%s, ExternalIDs=%+v\n", i, lrp.Name, lrp.UUID, lrp.ExternalIDs)
+	}
+
+	var nbLogicalRouterStaticRoutes []*nbdb.LogicalRouterStaticRoute
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalRouterStaticRoutes)).To(gomega.Succeed())
+	fmt.Printf("--- Logical Router Static Routes ---\n")
+	for i, sr := range nbLogicalRouterStaticRoutes {
+		fmt.Printf("SR[%d]: UUID=%s, IPPrefix=%s, Nexthop=%s\n", i, sr.UUID, sr.IPPrefix, sr.Nexthop)
+	}
+
+	fmt.Printf("--- Logical Switches ---\n")
+	for i, ls := range nbLogicalSwitches {
+		fmt.Printf("LS[%d]: Name=%s, UUID=%s, ExternalIDs=%+v\n", i, ls.Name, ls.UUID, ls.ExternalIDs)
+	}
+
+	var nbLogicalSwitchPorts []*nbdb.LogicalSwitchPort
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalSwitchPorts)).To(gomega.Succeed())
+	fmt.Printf("--- Logical Switch Ports ---\n")
+	for i, lsp := range nbLogicalSwitchPorts {
+		fmt.Printf("LSP[%d]: Name=%s, Type=%s, UUID=%s, ExternalIDs=%+v\n", i, lsp.Name, lsp.Type, lsp.UUID, lsp.ExternalIDs)
+	}
+
+	ginkgo.By("=== Southbound Database ===")
+	fmt.Printf("--- Chassis ---\n")
+	var sbChassis []*sbdb.Chassis
+	gomega.Expect(sbClient.List(context.Background(), &sbChassis)).To(gomega.Succeed())
+	for i, chassis := range sbChassis {
+		fmt.Printf("Chassis[%d]: Name=%s, UUID=%s, Hostname=%s\n", i, chassis.Name, chassis.UUID, chassis.Hostname)
+	}
+
+	fmt.Printf("--- Encap ---\n")
+	var sbEncap []*sbdb.Encap
+	gomega.Expect(sbClient.List(context.Background(), &sbEncap)).To(gomega.Succeed())
+	for i, encap := range sbEncap {
+		fmt.Printf("Encap[%d]: ChassisName=%s, IP=%s, UUID=%s, Type=%s\n", i, encap.ChassisName, encap.IP, encap.UUID, encap.Type)
+	}
+
+	fmt.Printf("--- Port Bindings ---\n")
+	var sbPortBinding []*sbdb.PortBinding
+	gomega.Expect(sbClient.List(context.Background(), &sbPortBinding)).To(gomega.Succeed())
+	for i, pb := range sbPortBinding {
+		chassisStr := "nil"
+		if pb.Chassis != nil {
+			chassisStr = *pb.Chassis
+		}
+		encapStr := "nil"
+		if pb.Encap != nil {
+			encapStr = *pb.Encap
+		}
+		fmt.Printf("PortBinding[%d]: LogicalPort=%s, Chassis=%s, Encap=%s\n", i, pb.LogicalPort, chassisStr, encapStr)
+	}
+
+	return nil
+}

@@ -546,6 +546,7 @@ func (zic *ZoneInterconnectHandler) EnsureLocalNodeTransitSwitchPortForPod(pod *
 		return fmt.Errorf("failed to parse encap IPs for node %s: %w", node.Name, err)
 	}
 
+	klog.Infof("XXXXX EnsureLocalNodeTransitSwitchPortForPod: node %s, encapIPs %v", node.Name, encapIPs)
 	if len(encapIPs) <= 1 {
 		// Single-VTEP node, port already created during node initialization
 		return nil
@@ -597,7 +598,7 @@ func (zic *ZoneInterconnectHandler) EnsureLocalNodeTransitSwitchPortForPod(pod *
 			pod.Namespace, pod.Name, encapIP, node.Name, encapIPs)
 	}
 
-	klog.V(5).Infof("Local pod %s/%s on node %s using encap IP %v, tunnel ID %d, index %d",
+	klog.Infof("XXXX Local pod %s/%s on node %s using encap IP %v, tunnel ID %d, index %d",
 		pod.Namespace, pod.Name, node.Name, encapIP, tunnelID, encapIndex)
 
 	// Check if transit switch port already exists for this tunnel ID

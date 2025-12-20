@@ -367,6 +367,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	oc.podRecorder.AddLSP(pod.UID, oc.GetNetInfo())
 
 	// For Layer 3 interconnect with multi-VTEP, ensure transit switch port exists for this pod's encap IP
+	klog.Infof("XXXXX DefaultNetworkController.addLogicalPort: pod %s/%s, isLayer3Interconnect %t", pod.Namespace, pod.Name, oc.isLayer3Interconnect())
 	if oc.isLayer3Interconnect() {
 		if err = oc.zoneICHandler.EnsureLocalNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
 			return fmt.Errorf("failed to ensure transit switch port for local pod %s/%s: %w", pod.Namespace, pod.Name, err)

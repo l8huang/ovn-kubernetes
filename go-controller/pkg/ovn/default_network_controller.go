@@ -900,7 +900,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return h.oc.ensurePod(oldPod, newPod, inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod))
+		return h.oc.ensurePod(oldPod, newPod, shouldAddPort(oldPod, newPod, inRetryCache))
 
 	case factory.NodeType:
 		newNode, ok := newObj.(*corev1.Node)

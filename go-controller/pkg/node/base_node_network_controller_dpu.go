@@ -63,8 +63,8 @@ func (bnnc *BaseNodeNetworkController) delDPUPodForNAD(pod *corev1.Pod, dpuCD *u
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
 	klog.Infof("Deleting %s from DPU", podDesc)
 
-	if podDeleted {
-		// no need to unset connection status annotation if pod is deleted anyway
+	// no need to unset connection status annotation if pod is deleted anyway
+	if !podDeleted {
 		err := bnnc.updatePodDPUConnStatusWithRetry(pod, nil, nadName)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove the old DPU connection status annotation for %s: %v", podDesc, err))
@@ -98,7 +98,7 @@ func dpuConnectionDetailChanged(oldDPUCD, newDPUCD *util.DPUConnectionDetails) b
 
 // watchPodsDPU watch updates for pod DPU annotations
 func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) {
-	clientSet := cni.NewClientSet(bnnc.client, corev1listers.NewPodLister(bnnc.watchFactory.LocalPodInformer().GetIndexer()))
+	clientSet := cni.NewClientSet(bnnc.client, corev1listers.NewPodLister(bnnc.watchFactory.LocalPodInformer().GetIndexer()), bnnc.watchFactory.NADInformer().Lister())
 
 	netName := bnnc.GetNetworkName()
 	return bnnc.watchFactory.AddPodHandler(cache.ResourceEventHandlerFuncs{

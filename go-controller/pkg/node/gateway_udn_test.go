@@ -40,7 +40,6 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	coreinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	fakenetworkmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -1716,7 +1715,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
-	It("should sync node port watcher successfully if a namespaces network is invalid", func() {
+	ovntest.OnSupportedPlatformsIt("should sync node port watcher successfully if a namespaces network is invalid", func() {
 		// create new gateway, add ns with primary UDN, pod, expose pod via Node port service, delete pod, delete udn, ensure sync should succeeds
 		namespace := util.NewNamespace("udn")
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -1739,13 +1738,16 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// in-order to simulate a namespace with an Invalid UDN (when GetActiveNamespace is called), we add an entry
 		// to the fake network manager but no specified network. GetActiveNetwork will return the appropriate error of Invalid Network for namespace.
 		// network manager may have a different implementation that fake network manager but both will return the same error.
-		fNPW.networkManager = &fakenetworkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
+		fNPW.networkManager = &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
 		services := append([]interface{}{}, service)
 		Expect(fNPW.SyncServices(services)).NotTo(HaveOccurred(), "must sync services")
 	})
 })
 
 func TestConstructUDNVRFIPRules(t *testing.T) {
+	if ovntest.NoRoot() {
+		t.Skip("Test requires root privileges")
+	}
 	type testRule struct {
 		priority int
 		family   int
@@ -1936,6 +1938,9 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 }
 
 func TestConstructUDNVRFIPRulesPodNetworkAdvertisedToDefaultVRF(t *testing.T) {
+	if ovntest.NoRoot() {
+		t.Skip("Test requires root privileges")
+	}
 	type testRule struct {
 		priority int
 		family   int
@@ -2119,6 +2124,9 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertisedToDefaultVRF(t *testing.T) {
 }
 
 func TestConstructUDNVRFIPRulesPodNetworkAdvertisedToNonDefaultVRF(t *testing.T) {
+	if ovntest.NoRoot() {
+		t.Skip("Test requires root privileges")
+	}
 	type testRule struct {
 		priority int
 		family   int

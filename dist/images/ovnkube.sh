@@ -10,7 +10,7 @@ fi
 . /root/ovndb-raft-functions.sh
 
 # This script is the entrypoint to the image.
-# Supports version 1.1.0 daemonsets
+# Supports version 1.2.0 daemonsets
 #    Keep the daemonset versioning aligned with the ovnkube release versions
 # Commands ($1 values)
 #    ovs-server     Runs the ovs daemons - ovsdb-server and ovs-switchd (v3)
@@ -28,7 +28,7 @@ fi
 #    ovn_debug      Displays ovn/ovs configuration and flows
 
 # NOTE: The script/image must be compatible with the daemonset.
-# This script supports version 1.1.0 daemonsets
+# This script supports version 1.2.0 daemonsets
 #      When called, it starts all needed daemons.
 # Currently the version here is used to match with the image version
 # It must be updated during every release
@@ -41,7 +41,7 @@ fi
 # OVN_KUBERNETES_NAMESPACE - k8s namespace - v3
 # K8S_NODE - hostname of the node - v3
 #
-# OVN_DAEMONSET_VERSION - version match daemonset and image - v1.1.0
+# OVN_DAEMONSET_VERSION - version match daemonset and image - v1.2.0
 # K8S_TOKEN - the apiserver token. Automatically detected when running in a pod - v3
 # K8S_CACERT - the apiserver CA. Automatically detected when running in a pod - v3
 # OVN_CONTROLLER_OPTS - the options for ovn-ctl
@@ -121,11 +121,11 @@ ovnkube_logfile_maxage=${OVNKUBE_LOGFILE_MAXAGE:-"5"}
 ovnkube_libovsdb_client_logfile=${OVNKUBE_LIBOVSDB_CLIENT_LOGFILE:-}
 
 # ovnkube.sh version (Update during each release)
-ovnkube_version="1.1.0"
+ovnkube_version="1.2.0"
 
 # The daemonset version must be compatible with this script.
 # The default when OVN_DAEMONSET_VERSION is not set is version 3
-ovn_daemonset_version=${OVN_DAEMONSET_VERSION:-"1.1.0"}
+ovn_daemonset_version=${OVN_DAEMONSET_VERSION:-"1.2.0"}
 
 # hostname is the host's hostname when using host networking,
 # This is useful on the master
@@ -263,12 +263,14 @@ ovn_egressfirewall_enable=${OVN_EGRESSFIREWALL_ENABLE:-false}
 ovn_egressqos_enable=${OVN_EGRESSQOS_ENABLE:-false}
 #OVN_EGRESSSERVICE_ENABLE - enable egress Service for ovn-kubernetes
 ovn_egressservice_enable=${OVN_EGRESSSERVICE_ENABLE:-false}
-#OVN_DISABLE_OVN_IFACE_ID_VER - disable usage of the OVN iface-id-ver option
-ovn_disable_ovn_iface_id_ver=${OVN_DISABLE_OVN_IFACE_ID_VER:-false}
 #OVN_MULTI_NETWORK_ENABLE - enable multiple network support for ovn-kubernetes
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
+#OVN_MULTI_VTEP_ENABLE - enable multiple VTEP support for ovn-kubernetes
+ovn_multi_vtep_enable=${OVN_MULTI_VTEP_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
+#OVN_NETWORK_CONNECT_ENABLE - enable network connect for ovn-kubernetes
+ovn_network_connect_enable=${OVN_NETWORK_CONNECT_ENABLE:=false}
 #OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 #OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
@@ -770,6 +772,16 @@ ovs-server() {
     USER_ARGS="--ovs-user=${ovs_user_id}"
   fi
 
+  # OVN-K marks NIC port as transient on startup when plugging it into ovs
+  # bridge. This is done so that on ovsdb-server resrtart, the NIC interface is
+  # detached from the bridge, which is necessary to restore connectivity
+  # through the NIC and make the node healthy. Marking the port as transient
+  # works only when we also start ovsdb-server with --delete-transient-ports.
+  #
+  # Note: once ovnkube is started, it will rewire the NIC port back into the
+  # bridge, and move IP configuration as necessary.
+  ovs_options="${ovs_options} --delete-transient-ports"
+
   /usr/share/openvswitch/scripts/ovs-ctl start --no-ovs-vswitchd \
     --system-id=random ${ovs_options} ${USER_ARGS} "$@"
 
@@ -858,7 +870,7 @@ function memory_trim_on_compaction_supported {
 }
 
 function get_node_zone() {
-  zone=$(kubectl --subresource=status --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  zone=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
      get node ${K8S_NODE} -o=jsonpath={'.metadata.labels.k8s\.ovn\.org/zone-name'})
   if [ -z "$zone" ]; then
     if [[ ${ovn_enable_interconnect} == "true" ]]; then
@@ -879,10 +891,10 @@ function get_ovnkube_zone_db_ep() {
   fi
 }
 
-# v1.1.0 - run nb_ovsdb in a separate container
+# v1.2.0 - run nb_ovsdb in a separate container
 nb-ovsdb() {
   trap 'ovsdb_cleanup nb' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnnb_db.pid
 
   if [[ ${ovn_db_host} == "" ]]; then
@@ -932,10 +944,10 @@ nb-ovsdb() {
   echo "=============== run nb_ovsdb ========== terminated"
 }
 
-# v1.1.0 - run sb_ovsdb in a separate container
+# v1.2.0 - run sb_ovsdb in a separate container
 sb-ovsdb() {
   trap 'ovsdb_cleanup sb' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnsb_db.pid
 
   if [[ ${ovn_db_host} == "" ]]; then
@@ -973,10 +985,10 @@ sb-ovsdb() {
   echo "=============== run sb_ovsdb ========== terminated"
 }
 
-# v1.1.0 - Runs ovn-dbchecker on ovnkube-db pod.
+# v1.2.0 - Runs ovn-dbchecker on ovnkube-db pod.
 ovn-dbchecker() {
   trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovn-dbchecker.pid
 
   # wait for ready_to_start_node
@@ -1027,7 +1039,7 @@ ovn-dbchecker() {
 # unix sockets
 local-nb-ovsdb() {
   trap 'ovsdb_cleanup nb' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnnb_db.pid
 
   echo "=============== run nb-ovsdb (unix sockets only) =========="
@@ -1061,7 +1073,7 @@ local-nb-ovsdb() {
 # unix sockets
 local-sb-ovsdb() {
   trap 'ovsdb_cleanup sb' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnsb_db.pid
 
   echo "=============== run sb-ovsdb (unix sockets only) ========== "
@@ -1079,10 +1091,10 @@ local-sb-ovsdb() {
   echo "=============== run sb-ovsdb (unix sockets only) ========== terminated"
 }
 
-# v1.1.0 - Runs northd on master. Does not run nb_ovsdb, and sb_ovsdb
+# v1.2.0 - Runs northd on master. Does not run nb_ovsdb, and sb_ovsdb
 run-ovn-northd() {
   trap 'ovn-appctl -t ovn-northd exit >/dev/null 2>&1; exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovn-northd.pid
   rm -f ${OVN_RUNDIR}/ovn-northd.*.ctl
 
@@ -1131,10 +1143,10 @@ run-ovn-northd() {
   exit 8
 }
 
-# v1.1.0 -  run ovnkube-identity
+# v1.2.0 -  run ovnkube-identity
 ovnkube-identity() {
     trap 'kill $(jobs -p); exit 0' TERM
-    check_ovn_daemonset_version "1.1.0"
+    check_ovn_daemonset_version "1.2.0"
     rm -f ${OVN_RUNDIR}/ovnkube-identity.pid
 
     ovnkube_enable_interconnect_flag=
@@ -1161,10 +1173,10 @@ ovnkube-identity() {
     exit 9
 }
 
-# v1.1.0 - run ovnkube --master (both cluster-manager and ovnkube-controller)
+# v1.2.0 - run ovnkube --master (both cluster-manager and ovnkube-controller)
 ovn-master() {
   trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnkube-master.pid
 
   echo "=============== ovn-master (wait for ready_to_start_node) ========== MASTER ONLY"
@@ -1285,6 +1297,12 @@ ovn-master() {
 	  multi_network_enabled_flag="--enable-multi-network --enable-multi-networkpolicy"
   fi
   echo "multi_network_enabled_flag=${multi_network_enabled_flag}"
+
+  ovn_multi_vtep_enable_flag=
+  if [[ ${ovn_multi_vtep_enable} == "true" ]]; then
+      ovn_multi_vtep_enable_flag="--enable-multi-vtep"
+  fi
+  echo "ovn_multi_vtep_enable_flag=${ovn_multi_vtep_enable_flag}"
 
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
@@ -1408,6 +1426,7 @@ ovn-master() {
     ${libovsdb_client_logfile_flag} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
+    ${ovn_multi_vtep_enable_flag} \
     ${network_segmentation_enabled_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -1453,10 +1472,10 @@ ovn-master() {
   exit 9
 }
 
-# v1.1.0 - run ovnkube --ovnkube-controller
+# v1.2.0 - run ovnkube --ovnkube-controller
 ovnkube-controller() {
   trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller.pid
 
   echo "=============== ovnkube-controller (wait for ready_to_start_node) =========="
@@ -1595,11 +1614,23 @@ ovnkube-controller() {
   fi
   echo "multi_network_enabled_flag=${multi_network_enabled_flag}"
 
+  ovn_multi_vtep_enable_flag=
+  if [[ ${ovn_multi_vtep_enable} == "true" ]]; then
+      ovn_multi_vtep_enable_flag="--enable-multi-vtep"
+  fi
+  echo "ovn_multi_vtep_enable_flag=${ovn_multi_vtep_enable_flag}"
+
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -1732,7 +1763,9 @@ ovnkube-controller() {
     ${libovsdb_client_logfile_flag} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
+    ${ovn_multi_vtep_enable_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -1779,7 +1812,7 @@ ovnkube-controller-with-node() {
   # currently we the process to background, therefore wait until that process removes its pid file on exit.
   # if the pid file doesnt exist, we exit immediately.
   trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; wait_ovnkube_controller_with_node_done; exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller-with-node.pid
 
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
@@ -1933,11 +1966,23 @@ ovnkube-controller-with-node() {
   fi
   echo "multi_network_enabled_flag=${multi_network_enabled_flag}"
 
+  ovn_multi_vtep_enable_flag=
+  if [[ ${ovn_multi_vtep_enable} == "true" ]]; then
+      ovn_multi_vtep_enable_flag="--enable-multi-vtep"
+  fi
+  echo "ovn_multi_vtep_enable_flag=${ovn_multi_vtep_enable_flag}"
+
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -1962,11 +2007,6 @@ ovnkube-controller-with-node() {
 	  egressservice_enabled_flag="--enable-egress-service"
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
-
-  disable_ovn_iface_id_ver_flag=
-  if [[ ${ovn_disable_ovn_iface_id_ver} == "true" ]]; then
-      disable_ovn_iface_id_ver_flag="--disable-ovn-iface-id-ver"
-  fi
 
   netflow_targets=
   if [[ -n ${ovn_netflow_targets} ]]; then
@@ -2196,7 +2236,6 @@ ovnkube-controller-with-node() {
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
-    ${disable_ovn_iface_id_ver_flag} \
     ${disable_pkt_mtu_check_flag} \
     ${disable_snat_multiple_gws_flag} \
     ${egressfirewall_enabled_flag} \
@@ -2216,7 +2255,9 @@ ovnkube-controller-with-node() {
     ${monitor_all} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
+    ${ovn_multi_vtep_enable_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2280,7 +2321,7 @@ ovnkube-controller-with-node() {
 # run ovnkube --cluster-manager.
 ovn-cluster-manager() {
   trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
 
   ovn_encap_port_flag=
     if [[ -n "${ovn_encap_port}" ]]; then
@@ -2380,11 +2421,23 @@ ovn-cluster-manager() {
   fi
   echo "multi_network_enabled_flag: ${multi_network_enabled_flag}"
 
+  ovn_multi_vtep_enable_flag=
+  if [[ ${ovn_multi_vtep_enable} == "true" ]]; then
+      ovn_multi_vtep_enable_flag="--enable-multi-vtep"
+  fi
+  echo "ovn_multi_vtep_enable_flag=${ovn_multi_vtep_enable_flag}"
+
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2463,7 +2516,9 @@ ovn-cluster-manager() {
     ${hybrid_overlay_flags} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
+    ${ovn_multi_vtep_enable_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2501,7 +2556,7 @@ ovn-cluster-manager() {
 
 # ovn-controller - all nodes
 ovn-controller() {
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovn-controller.pid
 
   echo "=============== ovn-controller - (wait for ovs)"
@@ -2544,7 +2599,7 @@ ovn-controller() {
 # ovn-node - all nodes
 ovn-node() {
   trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; exit 0' TERM
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnkube.pid
 
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
@@ -2628,20 +2683,27 @@ ovn-node() {
 	  egressservice_enabled_flag="--enable-egress-service"
   fi
 
-  disable_ovn_iface_id_ver_flag=
-  if [[ ${ovn_disable_ovn_iface_id_ver} == "true" ]]; then
-      disable_ovn_iface_id_ver_flag="--disable-ovn-iface-id-ver"
-  fi
-
   multi_network_enabled_flag=
   if [[ ${ovn_multi_network_enable} == "true" ]]; then
 	  multi_network_enabled_flag="--enable-multi-network --enable-multi-networkpolicy"
   fi
 
+  ovn_multi_vtep_enable_flag=
+  if [[ ${ovn_multi_vtep_enable} == "true" ]]; then
+      ovn_multi_vtep_enable_flag="--enable-multi-vtep"
+  fi
+  echo "ovn_multi_vtep_enable_flag=${ovn_multi_vtep_enable_flag}"
+
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2871,7 +2933,6 @@ ovn-node() {
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
         ${disable_forwarding_flag} \
-        ${disable_ovn_iface_id_ver_flag} \
         ${disable_pkt_mtu_check_flag} \
         ${disable_snat_multiple_gws_flag} \
         ${egress_interface} \
@@ -2887,7 +2948,9 @@ ovn-node() {
         ${monitor_all} \
         ${multicast_enabled_flag} \
         ${multi_network_enabled_flag} \
+        ${ovn_multi_vtep_enable_flag} \
         ${network_segmentation_enabled_flag} \
+        ${network_connect_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
         ${advertised_udn_isolation_flag} \
@@ -2941,7 +3004,7 @@ ovn-node() {
 
 # cleanup-ovn-node - all nodes
 cleanup-ovn-node() {
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
 
   rm -f /etc/cni/net.d/10-ovn-kubernetes.conf
 
@@ -2965,9 +3028,9 @@ cleanup-ovn-node() {
 
 }
 
-# v1.1.0 - Runs ovn-kube-util in daemon mode to export prometheus metrics related to OVS.
+# v1.2.0 - Runs ovn-kube-util in daemon mode to export prometheus metrics related to OVS.
 ovs-metrics() {
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
 
   echo "=============== ovs-metrics - (wait for ovs_ready)"
   wait_for_event ovs_ready

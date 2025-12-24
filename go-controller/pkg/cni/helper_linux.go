@@ -499,14 +499,16 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	// the value's format is:
 	//   enp1s0f0:<vtep-ip1>,enp193s0f0:<vtep-ip2>,enp197s0f0:<vtep-ip3>
 	// Here configure the OVS Interface's encap-ip according to the mapping.
+	encapIP := ifInfo.EncapIP
 	if deviceID != "" {
-		encapIP, err := getPfEncapIP(deviceID)
+		encapIP, err = getPfEncapIP(deviceID)
 		if err != nil {
 			return err
 		}
-		if len(encapIP) > 0 {
-			ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:encap-ip=%s", encapIP))
-		}
+	}
+	if len(encapIP) > 0 {
+		klog.Infof("ConfigureOVS: config OVS interface %s with encapIP %s", hostIfaceName, encapIP)
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:encap-ip=%s", encapIP))
 	}
 
 	// IPAM is optional for secondary flatL2 networks; thus, the ifaces may not
@@ -798,7 +800,7 @@ func (pr *PodRequest) deletePodConntrack() {
 				continue
 			}
 		}
-		err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
+		_, err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
 		if err != nil {
 			klog.Errorf("Failed to delete Conntrack Entry for %s: %v", ip.Address.IP.String(), err)
 			continue

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -20,14 +21,144 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
+
+func TestNADNeedsUpdate_NotifiesReconcilersOnNoopUpdate(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	keyCh := make(chan string, 1)
+	r := controller.NewReconciler("test-nad-reconciler", &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile: func(key string) error {
+			keyCh <- key
+			return nil
+		},
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
+	g.Expect(controller.Start(r)).To(gomega.Succeed())
+	t.Cleanup(func() { controller.Stop(r) })
+
+	c := &nadController{name: "test-nad-controller"}
+	_, err := c.RegisterNADReconciler(r)
+	g.Expect(err).To(gomega.Succeed())
+
+	oldNAD := &nettypes.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "nad", ResourceVersion: "1"},
+		Spec:       nettypes.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"0.3.1"}`},
+	}
+	newNAD := oldNAD.DeepCopy()
+	newNAD.ResourceVersion = "2"
+
+	needsUpdate := c.nadNeedsUpdate(oldNAD, newNAD)
+	g.Expect(needsUpdate).To(gomega.BeFalse())
+
+	g.Eventually(keyCh, time.Second).Should(gomega.Receive(gomega.Equal("ns/nad")))
+}
+
+func TestNADNeedsUpdate_DoesNotNotifyReconcilersOnRelevantUpdate(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	keyCh := make(chan string, 1)
+	r := controller.NewReconciler("test-nad-reconciler", &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile: func(key string) error {
+			keyCh <- key
+			return nil
+		},
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
+	g.Expect(controller.Start(r)).To(gomega.Succeed())
+	t.Cleanup(func() { controller.Stop(r) })
+
+	c := &nadController{name: "test-nad-controller"}
+	_, err := c.RegisterNADReconciler(r)
+	g.Expect(err).To(gomega.Succeed())
+
+	oldNAD := &nettypes.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "nad", ResourceVersion: "1"},
+		Spec:       nettypes.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"0.3.1"}`},
+	}
+	newNAD := oldNAD.DeepCopy()
+	newNAD.ResourceVersion = "2"
+	newNAD.Spec.Config = `{"cniVersion":"0.3.1","name":"changed"}`
+
+	needsUpdate := c.nadNeedsUpdate(oldNAD, newNAD)
+	g.Expect(needsUpdate).To(gomega.BeTrue())
+
+	g.Consistently(keyCh, 200*time.Millisecond).ShouldNot(gomega.Receive())
+}
+
+func TestSyncNAD_NotifiesReconcilers(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+
+	keyCh := make(chan string, 1)
+	r := controller.NewReconciler("test-nad-reconciler-sync", &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile: func(key string) error {
+			keyCh <- key
+			return nil
+		},
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
+	g.Expect(controller.Start(r)).To(gomega.Succeed())
+	t.Cleanup(func() { controller.Stop(r) })
+
+	nc := &networkController{
+		networks:           map[string]util.MutableNetInfo{},
+		networkControllers: map[string]*networkControllerState{},
+	}
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+
+	c := &nadController{
+		name:               "test-nad-controller",
+		networkController:  nc,
+		nads:               map[string]string{},
+		primaryNADs:        map[string]string{},
+		networkIDAllocator: netIDAlloc,
+	}
+	_, err := c.RegisterNADReconciler(r)
+	g.Expect(err).To(gomega.Succeed())
+
+	nadNS := "ns"
+	nadName := "nad"
+	nadKey := nadNS + "/" + nadName
+	networkAPrimary := &ovncnitypes.NetConf{
+		Topology: types.Layer2Topology,
+		NetConf: cnitypes.NetConf{
+			Name: "networkAPrimary",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Subnets: "10.1.130.0/24",
+		Role:    types.NetworkRolePrimary,
+		MTU:     1400,
+		NADName: nadKey,
+	}
+	nad, err := buildNAD(nadName, nadNS, networkAPrimary)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// The NAD has no network ID annotation so syncNAD will not ensure the network,
+	// but it should still notify all reconcilers.
+	g.Expect(c.syncNAD(nadKey, nad)).To(gomega.Succeed())
+	g.Eventually(keyCh, time.Second).Should(gomega.Receive(gomega.Equal(nadKey)))
+}
 
 type testNetworkController struct {
 	util.ReconcilableNetInfo
@@ -500,6 +631,8 @@ func TestNADController(t *testing.T) {
 				},
 			}
 			fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			nadController := &nadController{
 				nads:                map[string]string{},
 				primaryNADs:         map[string]string{},
@@ -507,6 +640,7 @@ func TestNADController(t *testing.T) {
 				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
 				tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 				nadClient:           fakeClient.NetworkAttchDefClient,
+				nodeLister:          wf.NodeCoreInformer().Lister(),
 				namespaceLister:     &fakeNamespaceLister{},
 			}
 			err = nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)
@@ -621,6 +755,14 @@ func TestNADController(t *testing.T) {
 }
 
 func TestSyncAll(t *testing.T) {
+	const nodeNetworkID = 1337
+	type mode string
+
+	const (
+		modeZone           mode = "zone"
+		modeClusterManager mode = "clusterManager"
+		modeNode           mode = "node"
+	)
 	network_A := &ovncnitypes.NetConf{
 		Topology: types.Layer3Topology,
 		NetConf: cnitypes.NetConf{
@@ -645,9 +787,15 @@ func TestSyncAll(t *testing.T) {
 		networkID string
 	}
 	tests := []struct {
-		name         string
-		testNADs     []TestNAD
-		syncAllError error
+		name                 string
+		testNADs             []TestNAD
+		syncAllInjectedError error
+		expectNADIgnored     bool
+		extraNADsIgnored     bool
+		node                 *corev1.Node
+		mode                 mode
+		expectGeneratedID    bool
+		expectInheritID      bool // for Node with conflicting ID
 	}{
 		{
 			name: "multiple networks referenced by multiple nads",
@@ -665,7 +813,7 @@ func TestSyncAll(t *testing.T) {
 					netconf: &network_A_Copy,
 				},
 			},
-			syncAllError: ErrNetworkControllerTopologyNotManaged,
+			syncAllInjectedError: ErrNetworkControllerTopologyNotManaged,
 		},
 		{
 			name: "nad already annotated with network ID",
@@ -676,6 +824,186 @@ func TestSyncAll(t *testing.T) {
 					networkID: "1",
 				},
 			},
+		},
+		{
+			name: "nad and node with no network ID should not fail to sync in zone mode and should be ignored",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-node",
+					Annotations: map[string]string{
+						// no "OVNNodeNetworkIds" annotation or it's empty
+					},
+				},
+			},
+			mode:             modeZone,
+			expectNADIgnored: true,
+		},
+		{
+			name: "nad and node with no network ID should not fail to sync in node mode and should be ignored",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-node",
+					Annotations: map[string]string{
+						// no "OVNNodeNetworkIds" annotation or it's empty
+					},
+				},
+			},
+			mode:             modeNode,
+			expectNADIgnored: true,
+		},
+		{
+			name: "nad and node with no network ID should not fail to sync in cluster-manager mode",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-node",
+					Annotations: map[string]string{
+						// no "OVNNodeNetworkIds" annotation or it's empty
+					},
+				},
+			},
+			mode:              modeClusterManager,
+			expectGeneratedID: true,
+		},
+		{
+			name: "nad without network ID + node with network ID should not fail to sync in cluster manager mode",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"network_A": "%d"}`, nodeNetworkID),
+					},
+				},
+			},
+			mode: modeClusterManager,
+		},
+		{
+			name: "nad with network ID + node with network ID should preserve NAD ID on sync in cluster manager mode",
+			testNADs: []TestNAD{
+				{
+					name:      "test/nad1",
+					netconf:   network_A,
+					networkID: "1",
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"network_A": "%d"}`, nodeNetworkID),
+					},
+				},
+			},
+			mode: modeClusterManager,
+		},
+		{
+			name: "nad without network ID + node with network ID should sync in zone mode",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.NetConf.Name, nodeNetworkID),
+					},
+				},
+			},
+			mode: modeZone,
+		},
+		{
+			name: "nad without network ID + node with network ID should sync in node mode",
+			testNADs: []TestNAD{
+				{
+					name:    "test/nad1",
+					netconf: network_A,
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.NetConf.Name, nodeNetworkID),
+					},
+				},
+			},
+			mode: modeNode,
+		},
+		{
+			name: "two NADs same network but conflicting IDs on node -> second should not sync in zone mode",
+			testNADs: []TestNAD{
+				{
+					name:      "test/nad1",
+					netconf:   network_A,
+					networkID: "1",
+				},
+				{
+					name:    "test2/nad2",
+					netconf: network_A,
+					// no ID on this NAD, but node has conflicting ID
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"network_A": "%d"}`, nodeNetworkID),
+					},
+				},
+			},
+			mode:             modeZone,
+			extraNADsIgnored: true,
+		},
+		{
+			name: "two NADs same network but conflicting IDs on node -> second should be inherit NAD ID in cm mode",
+			testNADs: []TestNAD{
+				{
+					name:      "test/nad1",
+					netconf:   network_A,
+					networkID: "1",
+				},
+				{
+					name:    "test2/nad2",
+					netconf: network_A,
+					// no ID on this NAD, but node has conflicting ID
+				},
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						util.OvnNetworkIDs: fmt.Sprintf(`{"network_A": "%d"}`, nodeNetworkID),
+					},
+				},
+			},
+			mode:            modeClusterManager,
+			expectInheritID: true,
 		},
 	}
 	for _, tt := range tests {
@@ -693,17 +1021,29 @@ func TestSyncAll(t *testing.T) {
 			tcm := &testControllerManager{
 				controllers: map[string]NetworkController{},
 			}
-			if tt.syncAllError != nil {
-				tcm.raiseErrorWhenCreatingController = tt.syncAllError
+			if tt.syncAllInjectedError != nil {
+				tcm.raiseErrorWhenCreatingController = tt.syncAllInjectedError
 			}
 
-			controller, err := NewForCluster(
-				tcm,
-				wf,
-				fakeClient,
-				nil,
-				id.NewTunnelKeyAllocator("TunnelKeys"),
-			)
+			// default to cluster manager
+			if len(tt.mode) == 0 {
+				tt.mode = modeClusterManager
+			}
+
+			var controller Controller
+			if tt.mode == modeZone {
+				controller, err = NewForZone("test", tcm, wf)
+			} else if tt.mode == modeNode {
+				controller, err = NewForNode("test", tcm, wf)
+			} else {
+				controller, err = NewForCluster(
+					tcm,
+					wf,
+					fakeClient,
+					nil,
+					id.NewTunnelKeyAllocator("TunnelKeys"),
+				)
+			}
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			expectedNetworks := map[string]util.NetInfo{}
@@ -719,13 +1059,18 @@ func TestSyncAll(t *testing.T) {
 				)
 			}
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			for _, testNAD := range tt.testNADs {
+			for i, testNAD := range tt.testNADs {
+				if i > 0 && tt.extraNADsIgnored {
+					break
+				}
 				namespace, name, err := cache.SplitMetaNamespaceKey(testNAD.name)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				testNAD.netconf.NADName = testNAD.name
 				nadAnnotations := map[string]string{
 					types.OvnNetworkNameAnnotation: testNAD.netconf.Name,
-					types.OvnNetworkIDAnnotation:   testNAD.networkID,
+				}
+				if len(testNAD.networkID) > 0 {
+					nadAnnotations[types.OvnNetworkIDAnnotation] = testNAD.networkID
 				}
 				nad, err := buildNADWithAnnotations(name, namespace, testNAD.netconf, nadAnnotations)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -736,13 +1081,19 @@ func TestSyncAll(t *testing.T) {
 				)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				netInfo := expectedNetworks[testNAD.netconf.Name]
-				if netInfo == nil {
+				if netInfo == nil && !tt.expectNADIgnored {
 					netInfo, err = util.NewNetInfo(testNAD.netconf)
 					mutableNetInfo := util.NewMutableNetInfo(netInfo)
-					if testNAD.networkID != "" {
+					if tt.expectGeneratedID {
+						mutableNetInfo.SetNetworkID(1)
+						netInfo = mutableNetInfo
+					} else if testNAD.networkID != "" {
 						id, err := strconv.Atoi(testNAD.networkID)
 						g.Expect(err).ToNot(gomega.HaveOccurred())
 						mutableNetInfo.SetNetworkID(id)
+						netInfo = mutableNetInfo
+					} else if tt.node != nil {
+						mutableNetInfo.SetNetworkID(nodeNetworkID)
 						netInfo = mutableNetInfo
 					}
 					g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -751,6 +1102,11 @@ func TestSyncAll(t *testing.T) {
 						expectedPrimaryNetworks[netInfo.GetNetworkName()] = netInfo
 					}
 				}
+			}
+
+			if tt.node != nil {
+				_, err := fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), tt.node, metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
 			err = wf.Start()
@@ -770,17 +1126,45 @@ func TestSyncAll(t *testing.T) {
 			g.Expect(actualNetworks).To(gomega.HaveLen(len(expectedNetworks)))
 			for name, network := range expectedNetworks {
 				g.Expect(actualNetworks).To(gomega.HaveKey(name))
-				g.Expect(util.AreNetworksCompatible(actualNetworks[name], network)).To(gomega.BeTrue())
+				g.Expect(util.AreNetworksCompatible(actualNetworks[name], network)).To(
+					gomega.BeTrue(),
+					"network compatibility failed\nactual=%#v\nexpected=%#v",
+					actualNetworks[name],
+					network,
+				)
 				if network.GetNetworkID() != types.InvalidID {
 					g.Expect(actualNetworks[name].GetNetworkID()).To(gomega.Equal(network.GetNetworkID()))
 				}
 			}
+			if tt.expectInheritID {
+				// Only one network should exist
+				g.Expect(actualNetworks).To(gomega.HaveLen(1), "network should still be created")
 
-			actualPrimaryNetwork, err := controller.Interface().GetActiveNetworkForNamespace("test")
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			g.Expect(expectedPrimaryNetworks).To(gomega.HaveKey(actualPrimaryNetwork.GetNetworkName()))
-			expectedPrimaryNetwork := expectedPrimaryNetworks[actualPrimaryNetwork.GetNetworkName()]
-			g.Expect(util.AreNetworksCompatible(expectedPrimaryNetwork, actualPrimaryNetwork)).To(gomega.BeTrue())
+				info := actualNetworks["network_A"]
+				g.Expect(info).ToNot(gomega.BeNil())
+
+				// Expect ID = 1 (from first NAD), not from node
+				g.Expect(info.GetNetworkID()).To(gomega.Equal(1))
+
+				// Both NADs should now be part of the same network
+				g.Expect(info.GetNADs()).To(gomega.HaveLen(2))
+
+				// NAD2 should now have the inherited ID
+				nad2, _ := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().
+					NetworkAttachmentDefinitions("test2").Get(context.Background(), "nad2", metav1.GetOptions{})
+				g.Expect(nad2).ToNot(gomega.BeNil())
+				g.Expect(nad2.Annotations[types.OvnNetworkIDAnnotation]).To(gomega.Equal("1"))
+
+				// Skip further primary network checks for this scenario
+				return
+			}
+			if !tt.expectNADIgnored {
+				actualPrimaryNetwork, err := controller.Interface().GetActiveNetworkForNamespace("test")
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(expectedPrimaryNetworks).To(gomega.HaveKey(actualPrimaryNetwork.GetNetworkName()))
+				expectedPrimaryNetwork := expectedPrimaryNetworks[actualPrimaryNetwork.GetNetworkName()]
+				g.Expect(util.AreNetworksCompatible(expectedPrimaryNetwork, actualPrimaryNetwork)).To(gomega.BeTrue())
+			}
 		})
 	}
 }
@@ -798,6 +1182,8 @@ func TestResourceCleanup(t *testing.T) {
 		},
 	}
 	fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
 	nadController := &nadController{
 		nads:                map[string]string{},
 		primaryNADs:         map[string]string{},
@@ -806,6 +1192,7 @@ func TestResourceCleanup(t *testing.T) {
 		tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 		nadClient:           fakeClient.NetworkAttchDefClient,
 		namespaceLister:     &fakeNamespaceLister{},
+		nodeLister:          wf.NodeCoreInformer().Lister(),
 	}
 	err = nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)
 	g.Expect(err).ToNot(gomega.HaveOccurred())

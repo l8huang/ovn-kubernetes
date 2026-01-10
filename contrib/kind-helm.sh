@@ -26,7 +26,9 @@ set_default_params() {
   export OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
   export KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
   export ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
+  export ENABLE_MULTI_VTEP=${ENABLE_MULTI_VTEP:-false}
   export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
+  export ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
   export ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
   export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
@@ -46,6 +48,9 @@ set_default_params() {
   # so it needs to use a larger subnet
   #  Upstream - NET_CIDR_IPV6=fd00:10:244::/64 SVC_CIDR_IPV6=fd00:10:96::/112
   export NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
+  if [ "$MULTI_POD_SUBNET" == true ]; then
+      NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
+  fi
   export NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
   export SVC_CIDR_IPV4=${SVC_CIDR_IPV4:-10.96.0.0/16}
   export NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
@@ -84,6 +89,9 @@ set_default_params() {
   export PLATFORM_IPV4_SUPPORT=true
 
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
+  export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
+  export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
+  export METRICS_IP=${METRICS_IP:-""}
 }
 
 usage() {
@@ -100,12 +108,15 @@ usage() {
     echo "       [ -ikv | --install-kubevirt ]"
     echo "       [ -mne | --multi-network-enable ]"
     echo "       [ -nse | --network-segmentation-enable ]"
+    echo "       [ -nce | --network-connect-enable ]"
     echo "       [ -uae | --preconfigured-udn-addresses-enable ]"
     echo "       [ -nqe | --network-qos-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
     echo "       [ -cn  | --cluster-name ]"
+    echo "       [ -mip | --metrics-ip <ip> ]"
+    echo "       [ --enable-coredumps ]"
     echo "       [ -h ]"
     echo ""
     echo "--delete                                      Delete current cluster"
@@ -123,14 +134,18 @@ usage() {
     echo "-ikv | --install-kubevirt                     Install kubevirt"
     echo "-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
+    echo "-nce | --network-connect-enable               Enable network connect (requires network segmentation). DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
+    echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
+    echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
-    echo "-ce  | --enable-central                       Deploy with OVN Central (Legacy Architecture)"
+    echo "-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)"
     echo "-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
+    echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
     echo ""
 
 }
@@ -168,8 +183,12 @@ parse_args() {
             -ikv | --install-kubevirt)            KIND_INSTALL_KUBEVIRT=true
                                                   ;;
             -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
-                                                  ;;
+                                                 ;;
+            -mve | --multi-vtep-enable )         ENABLE_MULTI_VTEP=true
+                                                 ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -nce | --network-connect-enable )     ENABLE_NETWORK_CONNECT=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable)    ENABLE_PRE_CONF_UDN_ADDR=true
                                                   ;;
@@ -193,7 +212,8 @@ parse_args() {
                                                   ;;
             -dns | --enable-dnsnameresolver )     OVN_ENABLE_DNSNAMERESOLVER=true
                                                   ;;
-            -ce | --enable-central )              OVN_ENABLE_INTERCONNECT=false
+            -ce | --enable-central )              echo "WARNING: --enable-central is deprecated. OVN Central (Legacy Architecture) will be removed in a future release." >&2
+                                                  OVN_ENABLE_INTERCONNECT=false
                                                   CENTRAL_ARG_PROVIDED=true
                                                   ;;
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
@@ -206,6 +226,13 @@ parse_args() {
                                                       exit 1
                                                   fi
                                                   KIND_NUM_NODES_PER_ZONE=$1
+                                                  ;;
+            -mps| --multi-pod-subnet )            MULTI_POD_SUBNET=true
+                                                  ;;
+            -mip | --metrics-ip ) shift
+                                                  METRICS_IP="$1"
+                                                  ;;
+            --enable-coredumps )                  ENABLE_COREDUMPS=true
                                                   ;;
             * )                                   usage
                                                   exit 1
@@ -236,13 +263,16 @@ print_params() {
      echo "KIND_CLUSTER_NAME = $KIND_CLUSTER_NAME"
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_MULTI_VTEP = $ENABLE_MULTI_VTEP"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
+     echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -287,22 +317,9 @@ build_ovn_image() {
       return
     fi
 
-    # Build ovn image
-    pushd ${DIR}/../go-controller
-    make
-    popd
-
     # Build ovn kube image
     pushd ${DIR}/../dist/images
-    # Find all built executables, but ignore the 'windows' directory if it exists
-    find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
-    echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-    $OCI_BIN build \
-      --build-arg http_proxy="$http_proxy" \
-      --build-arg https_proxy="$https_proxy" \
-      --network=host \
-      -t "${OVN_IMAGE}" \
-      -f Dockerfile.fedora .
+    make fedora-image
     popd
 }
 
@@ -350,13 +367,17 @@ EOT
     for i in $(seq 1 $KIND_NUM_WORKER); do
         echo "- role: worker" >> /tmp/kind.yaml
     done
+    # kind only allows single subnet for pod network, while ovn-kubernetes supports multiple subnets.
+    # So we pick the first subnet from the provided list for kind configuration and store it in KIND_CIDR.
+    # remove host subnet mask info for kind configuration (when the subnet is set as 10.0.0.0/16/14)
+    KIND_CIDR_IPV4=$(echo "${NET_CIDR_IPV4}"| cut -d',' -f1 | cut -d'/' -f1,2 )
 
     # Add networking configuration
     cat <<EOT >> /tmp/kind.yaml
 networking:
   disableDefaultCNI: true
   kubeProxyMode: none
-  podSubnet: $NET_CIDR_IPV4
+  podSubnet: $KIND_CIDR_IPV4
   serviceSubnet: $SVC_CIDR_IPV4
 EOT
 
@@ -432,10 +453,15 @@ create_ovn_kubernetes() {
                           --set tags.ovnkube-db=$(if [ "${OVN_HA}" == "false" ]; then echo "true"; else echo "false"; fi)"
     fi
     echo "value_file=${value_file}"
+    # For multi-pod-subnet case, NET_CIDR_IPV4 is a list of CIDRs separated by comma.
+    # When Helm encounters a comma within a string value in a --set argument, it attempts to parse the comma as a separator
+    # for multiple values (like a list or a map), not as part of a single string value.
+    set -x
+    ESCAPED_NET_CIDR_IPV4="${NET_CIDR_IPV4//,/\\,}"
     cmd=$(cat <<EOF
 helm install ovn-kubernetes . -f "${value_file}" \
           --set k8sAPIServer=${API_URL} \
-          --set podNetwork="${NET_CIDR_IPV4}/24" \
+          --set podNetwork="${ESCAPED_NET_CIDR_IPV4}" \
           --set serviceNetwork=${SVC_CIDR_IPV4} \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
           --set global.image.repository=$(get_image) \
@@ -443,13 +469,16 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableAdminNetworkPolicy=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableMultiVTEP=$(if [ "${ENABLE_MULTI_VTEP}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNetworkConnect=$(if [ "${ENABLE_NETWORK_CONNECT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enablePreconfiguredUDNAddresses=$(if [ "${ENABLE_PRE_CONF_UDN_ADDR}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
        )
@@ -478,6 +507,9 @@ print_params
 helm_prereqs
 build_ovn_image
 create_kind_cluster
+if [ "$ENABLE_COREDUMPS" == true ]; then
+  setup_coredumps
+fi
 detect_apiserver_url
 docker_disable_ipv6
 coredns_patch

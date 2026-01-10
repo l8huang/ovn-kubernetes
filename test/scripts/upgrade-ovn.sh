@@ -149,6 +149,7 @@ create_ovn_kube_manifests() {
     --ovn-loglevel-controller="${OVN_LOG_LEVEL_CONTROLLER}" \
     --egress-ip-enable=true \
     --egress-firewall-enable=true \
+    --enable-coredumps=true \
     --v4-join-subnet="${JOIN_SUBNET_IPV4}" \
     --v6-join-subnet="${JOIN_SUBNET_IPV6}" \
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
@@ -364,7 +365,7 @@ for node in $MASTER_NODES; do
 done
 
 # redownload the e2e test binaries if their version differs
-K8S_VERSION="v1.33.1"
+K8S_VERSION="v1.34.0"
 E2E_VERSION=$(/usr/local/bin/e2e.test --version)
 if [[ "$E2E_VERSION" != "$K8S_VERSION" ]]; then
    echo "found version $E2E_VERSION of e2e binary, need version $K8S_VERSION ; will download it."

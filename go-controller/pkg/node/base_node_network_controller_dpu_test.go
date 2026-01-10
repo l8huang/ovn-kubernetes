@@ -159,12 +159,12 @@ var _ = Describe("Node DPU tests", func() {
 				Egress:        -1,
 				IsDPUHostMode: true,
 				NetName:       types.DefaultNetworkName,
-				NADName:       types.DefaultNetworkName,
+				NADKey:        types.DefaultNetworkName,
 				PodUID:        "a-pod",
 			}
 
 			fakeClient := newFakeKubeClientWithPod(&pod)
-			clientset = cni.NewClientSet(fakeClient, &podLister)
+			clientset = cni.NewClientSet(fakeClient, &podLister, nil)
 			scd = util.DPUConnectionDetails{
 				PfId:      "0",
 				VfId:      "9",

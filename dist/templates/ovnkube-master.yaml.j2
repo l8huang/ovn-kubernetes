@@ -102,7 +102,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: "{{ ovn_loglevel_northd }}"
         - name: K8S_APISERVER
@@ -198,8 +198,12 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {% if (enable_coredumps | default("false")) == "true" -%}
+        - name: GOTRACEBACK
+          value: "crash"
+        {% endif -%}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: "{{ ovnkube_master_loglevel }}"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -214,6 +218,8 @@ spec:
           value: "{{ ovnkube_config_duration_enable }}"
         - name: OVNKUBE_METRICS_SCALE_ENABLE
           value: "{{ ovnkube_metrics_scale_enable }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVNKUBE_COMPACT_MODE_ENABLE
           value: "{{ ovnkube_compact_mode_enable }}"
         - name: OVN_NET_CIDR
@@ -257,6 +263,8 @@ spec:
           value: "{{ ovn_egress_qos_enable }}"
         - name: OVN_MULTI_NETWORK_ENABLE
           value: "{{ ovn_multi_network_enable }}"
+        - name: OVN_MULTI_VTEP_ENABLE
+          value: "{{ ovn_multi_vtep_enable }}"
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: "{{ ovn_network_segmentation_enable }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE

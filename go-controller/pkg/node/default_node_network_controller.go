@@ -18,7 +18,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -767,13 +766,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	var subnets []*net.IPNet
 	var cniServer *cni.Server
 
-	// Setting debug log level during node bring up to expose bring up process.
-	// Log level is returned to configured value when bring up is complete.
-	var level klog.Level
-	if err := level.Set("5"); err != nil {
-		klog.Errorf("Setting klog \"loglevel\" to 5 failed, err: %v", err)
-	}
-
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
 		if err = configureGlobalForwarding(); err != nil {
 			return err
@@ -912,8 +904,15 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	// Set the node-encap-ips annotation with the configured encap IP.
 	// This encap IP is unavailable on the DPU host mode, so we don't need to set it there.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
-		encapIPList := sets.New[string]()
-		encapIPList.Insert(strings.Split(config.Default.EffectiveEncapIP, ",")...)
+		// Deduplicate encap IPs while preserving order
+		seen := make(map[string]bool)
+		encapIPList := make([]string, 0)
+		for _, ip := range strings.Split(config.Default.EffectiveEncapIP, ",") {
+			if !seen[ip] {
+				seen[ip] = true
+				encapIPList = append(encapIPList, ip)
+			}
+		}
 		if err := util.SetNodeEncapIPs(nodeAnnotator, encapIPList); err != nil {
 			return fmt.Errorf("failed to set node-encap-ips annotation for node %s: %w", nc.name, err)
 		}
@@ -951,9 +950,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	if err := level.Set(strconv.Itoa(config.Logging.Level)); err != nil {
-		klog.Errorf("Reset of initial klog \"loglevel\" failed, err: %v", err)
-	}
 	nc.sbZone = sbZone
 
 	return nil
@@ -969,13 +965,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
-	}
-
-	// Setting debug log level during node bring up to expose bring up process.
-	// Log level is returned to configured value when bring up is complete.
-	var level klog.Level
-	if err := level.Set("5"); err != nil {
-		klog.Errorf("Setting klog \"loglevel\" to 5 failed, err: %v", err)
 	}
 
 	if node, err = nc.watchFactory.GetNode(nc.name); err != nil {
@@ -1031,7 +1020,9 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
 	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
 	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
+	// When multi-VTEP is enabled, static route is created only after a Pod is schedule on remote node.
+	// So this hack conflicts with multi-VTEP, it should be skipped.
+	if !config.OVNKubernetesFeature.EnableMultiVTEP && config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
 		klog.Info("Upgrade Hack: Interconnect is enabled")
 		var err1 error
 		start := time.Now()
@@ -1183,10 +1174,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	if err := level.Set(strconv.Itoa(config.Logging.Level)); err != nil {
-		klog.Errorf("Reset of initial klog \"loglevel\" failed, err: %v", err)
-	}
-
 	// start management port controller
 	err = nc.mgmtPortController.Start(nc.stopChan)
 	if err != nil {
@@ -1294,7 +1281,12 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 // deleteLogicalEntities will never be true for default network
 func (nc *DefaultNodeNetworkController) Stop() {
+	if nc.stopChan == nil {
+		klog.Infof("Default node network controller is already stopped")
+		return
+	}
 	close(nc.stopChan)
+	nc.stopChan = nil
 	nc.wg.Wait()
 }
 
@@ -1340,9 +1332,15 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 		return fmt.Errorf("cannot reconcile conntrack: %v", err)
 	}
 	svc, err := nc.watchFactory.GetService(namespacedName.Namespace, namespacedName.Name)
-	if err != nil && !apierrors.IsNotFound(err) {
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.V(5).Infof("Service %s/%s not found (might have been deleted) when reconciling conntrack for endpointslice %s",
+				namespacedName.Namespace, namespacedName.Name, oldEndpointSlice.Name)
+			// service is not found, likely deleted, flushing service conntrack entries will be handled at service reconciliation. No-op here.
+			return nil
+		}
 		return fmt.Errorf("error while retrieving service for endpointslice %s/%s when reconciling conntrack: %v",
-			newEndpointSlice.Namespace, newEndpointSlice.Name, err)
+			oldEndpointSlice.Namespace, oldEndpointSlice.Name, err)
 	}
 	for _, oldPort := range oldEndpointSlice.Ports {
 		if *oldPort.Protocol != corev1.ProtocolUDP { // flush conntrack only for UDP
@@ -1356,10 +1354,20 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 				if newEndpointSlice != nil && util.DoesEndpointSliceContainEligibleEndpoint(newEndpointSlice, oldIPStr, *oldPort.Port, *oldPort.Protocol, svc) {
 					continue
 				}
+				portName := ""
+				if oldPort.Name != nil {
+					portName = *oldPort.Name
+				}
+				servicePort, err := util.FindServicePortForEndpointSlicePort(svc, portName, *oldPort.Protocol)
+				if err != nil {
+					klog.Errorf("Failed to get service port for endpoint %s: %v", oldIPStr, err)
+					continue
+				}
 				// upon update and delete events, flush conntrack only for UDP
-				if err := util.DeleteConntrackServicePort(oldIPStr, *oldPort.Port, *oldPort.Protocol,
+				if _, err := util.DeleteConntrackServicePort(oldIPStr, servicePort.Port, *oldPort.Protocol,
 					netlink.ConntrackReplyAnyIP, nil); err != nil {
-					klog.Errorf("Failed to delete conntrack entry for %s: %v", oldIPStr, err)
+					klog.Errorf("Failed to delete conntrack entry for %s port %d: %v", oldIPStr, servicePort.Port, err)
+					errors = append(errors, err)
 				}
 			}
 		}

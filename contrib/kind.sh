@@ -47,16 +47,18 @@ usage() {
     echo "                 [-dd |--dns-domain |"
     echo "                 [-ric | --run-in-container |"
     echo "                 [-cn | --cluster-name |"
-    echo "                 [-ehp|--egress-ip-healthcheck-port <num>]"
+    echo "                 [-ehp|--egress-ip-healthcheck-port <num>] [-mip|--metrics-ip <ip>]"
     echo "                 [-is | --ipsec]"
     echo "                 [-cm | --compact-mode]"
     echo "                 [-ic | --enable-interconnect]"
+    echo "                 [-nce | --network-connect-enable]"
     echo "                 [-uae | --preconfigured-udn-addresses-enable]"
     echo "                 [-rae | --enable-route-advertisements]"
     echo "                 [-rud | --routed-udn-isolation-disable]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
     echo "                 [--isolated]"
+    echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
     echo "                 [-obs | --observability]"
     echo "                 [-h]]"
@@ -88,6 +90,8 @@ echo "-n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 
 echo "-i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled."
 echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: HA - 2 worker"
 echo "                                              nodes and no HA - 0 worker nodes."
+echo "-inf | --num-infra                            Number of infra nodes. DEFAULT: 0"
+echo "-prom| --install-prometheus                   Install Prometheus on infra nodes"
 echo "-sw  | --allow-system-writes                  Allow script to update system. Intended to allow"
 echo "                                              github CI to be updated with IPv6 settings."
 echo "                                              DEFAULT: Don't allow."
@@ -111,15 +115,17 @@ echo "-dd  | --dns-domain                           Configure a custom dnsDomain
 echo "-cn  | --cluster-name                         Configure the kind cluster's name"
 echo "-ric | --run-in-container                     Configure the script to be run from a docker container, allowing it to still communicate with the kind controlplane"
 echo "-ehp | --egress-ip-healthcheck-port           TCP port used for gRPC session by egress IP node check. DEFAULT: 9107 (Use "0" for legacy dial to port 9)."
+echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
 echo "-is  | --ipsec                                Enable IPsec encryption (spawns ovn-ipsec pods)"
 echo "-sm  | --scale-metrics                        Enable scale metrics"
 echo "-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process."
-echo "-ce  | --enable-central                       Deploy with OVN Central (Legacy Architecture)"
+echo "-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)"
 echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled."
 echo "--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook"
 echo "-npz | --nodes-per-zone                       If interconnect is enabled, number of nodes per zone (Default 1). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
 echo "-mtu                                          Define the overlay mtu"
 echo "--isolated                                    Deploy with an isolated environment (no default gateway)"
+echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled."
 echo "--delete                                      Delete current cluster"
 echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
 echo "--add-nodes                                   Adds nodes to an existing cluster. The number of nodes to be added is specified by --num-workers. Also use -ic if the cluster is using interconnect."
@@ -129,6 +135,8 @@ echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads 
 echo "-rae | --enable-route-advertisements          Enable route advertisements"
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
+echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
+echo "-mve | --multi-vtep-enable                    Enable multi-VTEP feature."
 echo ""
 }
 
@@ -208,6 +216,16 @@ parse_args() {
                                                     exit 1
                                                 fi
                                                 KIND_NUM_WORKER=$1
+                                                ;;
+            -inf | --num-infra )                shift
+                                                if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                                                    echo "Invalid num-infra: $1"
+                                                    usage
+                                                    exit 1
+                                                fi
+                                                KIND_NUM_INFRA=$1
+                                                ;;
+            -prom | --install-prometheus )      KIND_INSTALL_PROMETHEUS=true
                                                 ;;
             -npz | --nodes-per-zone )           shift
                                                 if ! [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -302,15 +320,24 @@ parse_args() {
                                                 fi
                                                 OVN_EGRESSIP_HEALTHCHECK_PORT=$1
                                                 ;;
+            -mip | --metrics-ip ) 		shift
+                                                METRICS_IP="$1"
+                                                ;;
            -sm  | --scale-metrics )             OVN_METRICS_SCALE_ENABLE=true
                                                 ;;
            -cm  | --compact-mode )              OVN_COMPACT_MODE=true
                                                 ;;
             --isolated )                        OVN_ISOLATED=true
                                                 ;;
+            --enable-coredumps )                ENABLE_COREDUMPS=true
+                                                ;;
             -mne | --multi-network-enable )     ENABLE_MULTI_NET=true
                                                 ;;
+            -mve | --multi-vtep-enable )        ENABLE_MULTI_VTEP=true
+                                                ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -nce | --network-connect-enable )    ENABLE_NETWORK_CONNECT=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable) ENABLE_PRE_CONF_UDN_ADDR=true
                                                   ;;
@@ -320,7 +347,8 @@ parse_args() {
                                                   ;;
             -rud | --routed-udn-isolation-disable) ADVERTISED_UDN_ISOLATION_MODE=loose
                                                   ;;
-            -ce | --enable-central )              OVN_ENABLE_INTERCONNECT=false
+            -ce | --enable-central )              echo "WARNING: --enable-central is deprecated. OVN Central (Legacy Architecture) will be removed in a future release." >&2
+                                                  OVN_ENABLE_INTERCONNECT=false
                                                   CENTRAL_ARG_PROVIDED=true
                                                   ;;
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
@@ -342,6 +370,8 @@ parse_args() {
                                                 KIND_CREATE=false
                                                 ;;
             -dns | --enable-dnsnameresolver )   OVN_ENABLE_DNSNAMERESOLVER=true
+                                                ;;
+            -mps| --multi-pod-subnet )          MULTI_POD_SUBNET=true
                                                 ;;
             -h | --help )                       usage
                                                 exit
@@ -415,11 +445,14 @@ print_params() {
      echo "OVN_ENABLE_EX_GW_NETWORK_BRIDGE = $OVN_ENABLE_EX_GW_NETWORK_BRIDGE"
      echo "OVN_EX_GW_NETWORK_INTERFACE = $OVN_EX_GW_NETWORK_INTERFACE"
      echo "OVN_EGRESSIP_HEALTHCHECK_PORT = $OVN_EGRESSIP_HEALTHCHECK_PORT"
+     echo "METRICS_IP = $METRICS_IP"
      echo "OVN_DEPLOY_PODS = $OVN_DEPLOY_PODS"
      echo "OVN_METRICS_SCALE_ENABLE = $OVN_METRICS_SCALE_ENABLE"
      echo "OVN_ISOLATED = $OVN_ISOLATED"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_MULTI_VTEP = $ENABLE_MULTI_VTEP"
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
+     echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
      echo "ADVERTISED_UDN_ISOLATION_MODE= $ADVERTISED_UDN_ISOLATION_MODE"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
@@ -435,8 +468,11 @@ print_params() {
      echo "OVN_ENABLE_OVNKUBE_IDENTITY = $OVN_ENABLE_OVNKUBE_IDENTITY"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
+     echo "KIND_NUM_INFRA = $KIND_NUM_INFRA"
+     echo "KIND_INSTALL_PROMETHEUS = $KIND_INSTALL_PROMETHEUS"
      echo "OVN_MTU= $OVN_MTU"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
      echo ""
 }
 
@@ -579,15 +615,20 @@ set_default_params() {
   if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
     OVN_EX_GW_NETWORK_INTERFACE="eth1"
   fi
+  MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
   # Input not currently validated. Modify outside script at your own risk.
   # These are the same values defaulted to in KIND code (kind/default.go).
   # NOTE: KIND NET_CIDR_IPV6 default use a /64 but OVN have a /64 per host
   # so it needs to use a larger subnet
   #  Upstream - NET_CIDR_IPV6=fd00:10:244::/64 SVC_CIDR_IPV6=fd00:10:96::/112
   NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
+  NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
+  if [ "$MULTI_POD_SUBNET" == true ]; then
+    NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
+    NET_CIDR_IPV6="fd00:10:243::/63/64,fd00:10:244::/48"
+  fi
   NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
   SVC_CIDR_IPV4=${SVC_CIDR_IPV4:-10.96.0.0/16}
-  NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
   SVC_CIDR_IPV6=${SVC_CIDR_IPV6:-fd00:10:96::/112}
   JOIN_SUBNET_IPV4=${JOIN_SUBNET_IPV4:-100.64.0.0/16}
   JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
@@ -618,6 +659,9 @@ set_default_params() {
     KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   fi
 
+  KIND_NUM_INFRA=${KIND_NUM_INFRA:-0}
+  KIND_INSTALL_PROMETHEUS=${KIND_INSTALL_PROMETHEUS:-false}
+
   if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
     KIND_NUM_NODES_PER_ZONE=${KIND_NUM_NODES_PER_ZONE:-1}
 
@@ -630,6 +674,7 @@ set_default_params() {
 
   OVN_HOST_NETWORK_NAMESPACE=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
+  METRICS_IP=${METRICS_IP:-""}
   OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
@@ -648,6 +693,7 @@ set_default_params() {
     echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
     exit 1
   fi
+  ENABLE_MULTI_VTEP=${ENABLE_MULTI_VTEP:-false}
 
   ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
   if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
@@ -668,6 +714,11 @@ set_default_params() {
     echo "Preconfigured UDN addresses requires interconnect to be enabled (-ic)"
     exit 1
   fi
+  ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
+  if [[ $ENABLE_NETWORK_CONNECT == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
+    echo "Network connect requires network-segmentation to be enabled (-nse)"
+    exit 1
+  fi
   ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
@@ -677,6 +728,7 @@ set_default_params() {
   OVN_MTU=${OVN_MTU:-1400}
   OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
   OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
+  ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
 }
 
 check_ipv6() {
@@ -716,18 +768,26 @@ check_ipv6() {
 }
 
 set_cluster_cidr_ip_families() {
+# kind only allows single subnet for pod network, while ovn-kubernetes supports multiple subnets.
+# So we pick the first subnet from the provided list for kind configuration and store it in KIND_CIDR.
+# remove host subnet mask info for kind configuration (when the subnet is set as 10.0.0.0/16/14)
+  KIND_CIDR_IPV4=$(echo "${NET_CIDR_IPV4}"| cut -d',' -f1 | cut -d'/' -f1,2 )
+  KIND_CIDR_IPV6=$(echo "${NET_CIDR_IPV6}"| cut -d',' -f1 | cut -d'/' -f1,2 )
   if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
     IP_FAMILY=""
+    KIND_CIDR=$KIND_CIDR_IPV4
     NET_CIDR=$NET_CIDR_IPV4
     SVC_CIDR=$SVC_CIDR_IPV4
     echo "IPv4 Only Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
   elif [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="ipv6"
+    KIND_CIDR=$KIND_CIDR_IPV6
     NET_CIDR=$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV6
     echo "IPv6 Only Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
   elif [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="dual"
+    KIND_CIDR=$KIND_CIDR_IPV4,$KIND_CIDR_IPV6
     NET_CIDR=$NET_CIDR_IPV4,$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV4,$SVC_CIDR_IPV6
     echo "Dual Stack Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
@@ -798,12 +858,13 @@ create_kind_cluster() {
 
   ovn_ip_family=${IP_FAMILY} \
   ovn_ha=${OVN_HA} \
-  net_cidr=${NET_CIDR} \
+  net_cidr="${KIND_CIDR}" \
   svc_cidr=${SVC_CIDR} \
   use_local_registy=${KIND_LOCAL_REGISTRY} \
   dns_domain=${KIND_DNS_DOMAIN} \
   ovn_num_master=${KIND_NUM_MASTER} \
   ovn_num_worker=${KIND_NUM_WORKER} \
+  kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
   kind_local_registry_port=${KIND_LOCAL_REGISTRY_PORT} \
   kind_local_registry_name=${KIND_LOCAL_REGISTRY_NAME} \
@@ -813,11 +874,11 @@ create_kind_cluster() {
   if kind get clusters | grep "${KIND_CLUSTER_NAME}"; then
     delete
   fi
-  
+
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     create_local_registry
   fi
-  
+
   kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
 
   cat "${KUBECONFIG}"
@@ -903,6 +964,7 @@ create_ovn_kube_manifests() {
     --ovn-loglevel-sb="${OVN_LOG_LEVEL_SB}" \
     --ovn-loglevel-controller="${OVN_LOG_LEVEL_CONTROLLER}" \
     --ovnkube-libovsdb-client-logfile="${LIBOVSDB_CLIENT_LOGFILE}" \
+    --enable-coredumps="${ENABLE_COREDUMPS}" \
     --ovnkube-config-duration-enable=true \
     --admin-network-policy-enable=true \
     --egress-ip-enable=true \
@@ -918,12 +980,15 @@ create_ovn_kube_manifests() {
     --v6-transit-subnet="${TRANSIT_SUBNET_IPV6}" \
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
     --multi-network-enable="${ENABLE_MULTI_NET}" \
+    --multi-vtep-enable="${ENABLE_MULTI_VTEP}" \
     --network-segmentation-enable="${ENABLE_NETWORK_SEGMENTATION}" \
+    --network-connect-enable="${ENABLE_NETWORK_CONNECT}" \
     --preconfigured-udn-addresses-enable="${ENABLE_PRE_CONF_UDN_ADDR}" \
     --route-advertisements-enable="${ENABLE_ROUTE_ADVERTISEMENTS}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
+    --metrics-ip="${METRICS_IP}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
     --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
     --enable-multi-external-gateway=true \
@@ -1006,6 +1071,76 @@ install_ovn_multiple_nodes_zones() {
   run_kubectl apply -f ovnkube-node.yaml
 }
 
+configure_multi_vtep_encap_ips() {
+  echo "configuring encap IPs on kind nodes"
+  kubectl -n ovn-kubernetes rollout status daemonset ovs-node --timeout 3m
+  if [ $? -ne 0 ]; then
+    echo "ovs-node did not roll out successfully"
+    exit 1
+  fi
+
+  OVS_PODS=$(kubectl -n ovn-kubernetes get pods -l app=ovs-node -o name)
+  for p in $OVS_PODS; do
+    echo "configuring encap IPs on $p"
+    kubectl -n ovn-kubernetes exec -i $p -- bash -s <<'EOF'
+      set -x
+
+      vtep0=`ip -br addr show dev eth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev vtep1 | awk '{print $3}' | cut -d '/' -f 1`
+      ovs-vsctl set open . external_ids:ovn-encap-ip=$vtep0,$vtep1
+      ovs-vsctl set open . external_ids:ovn-encap-ip-default=$vtep0
+
+      ovn-kube-util nics-to-bridge vtep1
+
+      # Below settings are required when using multi-VTEP
+      # - rp_filter=2
+      #   prevent kernal complaining about martian packet
+      # - arp_ignore=1
+      #   prevents ARP confusion - only answer ARP when target IP is assigned to the receiving interface
+      # - arp_announce=2
+      #   prevents ARP cache corruption on peers - sending ARP with wrong source IP
+
+      sysctl -w net.ipv4.conf.eth0.rp_filter=2
+      sysctl -w net.ipv4.conf.eth0.arp_ignore=1
+      sysctl -w net.ipv4.conf.eth0.arp_announce=2
+
+      sysctl -w net.ipv4.conf.brvtep1.rp_filter=2
+      sysctl -w net.ipv4.conf.brvtep1.arp_ignore=1
+      sysctl -w net.ipv4.conf.brvtep1.arp_announce=2
+EOF
+
+  done
+}
+
+
+configure_multi_vtep_routing() {
+  echo "configuring multi-VTEP routing on kind nodes"
+
+  KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort)
+  for n in $KIND_NODES; do
+    "$OCI_BIN" exec  -i "$n" bash -s <<'EOF'
+      set -x
+
+      echo "wait breth0 interface to be created..."
+      timeout 120 bash -c 'while ! ip link show breth0 &>/dev/null; do sleep 1; done'
+
+      sysctl -w net.ipv4.conf.breth0.rp_filter=2
+      sysctl -w net.ipv4.conf.breth0.arp_ignore=1
+      sysctl -w net.ipv4.conf.breth0.arp_announce=2
+
+      # add source-based routing rules for the VTEP interfaces
+      vtep0=`ip -br addr show dev breth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev brvtep1 | awk '{print $3}' | cut -d '/' -f 1`
+      subnet=`ip -br addr show breth0 | awk '{print $3}' | xargs -I{} python3 -c "import ipaddress; n=ipaddress.ip_interface('{}'); print(f'{n.network}')"`
+      ip rule add from $vtep0 table 6081 priority 6081
+      ip route add $subnet dev breth0 table 6081 metric 800
+
+      ip rule add from $vtep1 table 6082 priority 6082
+      ip route add $subnet dev brvtep1 table 6082 metric 802
+EOF
+  done
+}
+
 install_ovn() {
   pushd ${MANIFEST_OUTPUT_DIR}
 
@@ -1018,6 +1153,9 @@ install_ovn() {
   run_kubectl apply -f k8s.ovn.org_userdefinednetworks.yaml
   run_kubectl apply -f k8s.ovn.org_clusteruserdefinednetworks.yaml
   run_kubectl apply -f k8s.ovn.org_routeadvertisements.yaml
+  if [ "$ENABLE_NETWORK_CONNECT" == true ]; then
+    run_kubectl apply -f k8s.ovn.org_clusternetworkconnects.yaml
+  fi
   # NOTE: When you update vendoring versions for the ANP & BANP APIs, we must update the version of the CRD we pull from in the below URL
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml
@@ -1044,6 +1182,10 @@ install_ovn() {
 
   run_kubectl apply -f ovs-node.yaml
 
+  if [ "$ENABLE_MULTI_VTEP" == true ]; then
+    configure_multi_vtep_encap_ips
+  fi
+
   if [ "$OVN_ENABLE_INTERCONNECT" == false ]; then
     install_ovn_global_zone
   else
@@ -1054,9 +1196,13 @@ install_ovn() {
     fi
   fi
 
+  if [ "$ENABLE_MULTI_VTEP" == true ]; then
+    configure_multi_vtep_routing
+  fi
+
   popd
 
-  # When using internal registry force pod reload just the ones with 
+  # When using internal registry force pod reload just the ones with
   # non OVS containers, restarting OVS pods breaks the cluster.
   if [ "${KIND_CREATE}" == false ] && [ "${KIND_LOCAL_REGISTRY}" == false ] ; then
     for pod in ${OVN_DEPLOY_PODS}; do
@@ -1196,6 +1342,9 @@ check_ipv6
 set_cluster_cidr_ip_families
 if [ "$KIND_CREATE" == true ]; then
     create_kind_cluster
+    if [ "$ENABLE_COREDUMPS" == true ]; then
+      setup_coredumps
+    fi
     if [ "$RUN_IN_CONTAINER" == true ]; then
       run_script_in_container
     fi
@@ -1207,6 +1356,9 @@ if [ "$KIND_CREATE" == true ]; then
       connect_local_registry
     fi
     docker_disable_ipv6
+    if [ "$ENABLE_MULTI_VTEP" == true ]; then
+      enable_multi_vtep
+    fi
     if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
       docker_create_second_interface
     fi
@@ -1228,6 +1380,9 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
   deploy_bgp_external_server
 fi
+if [ "$ENABLE_MULTI_NET" == true ]; then
+  enable_multi_net
+fi
 build_ovn_image
 detect_apiserver_url
 create_ovn_kube_manifests
@@ -1236,9 +1391,7 @@ install_ovn
 if [ "$KIND_INSTALL_INGRESS" == true ]; then
   install_ingress
 fi
-if [ "$ENABLE_MULTI_NET" == true ]; then
-  enable_multi_net
-fi
+
 kubectl_wait_pods
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     kubectl_wait_dnsnameresolver_pods

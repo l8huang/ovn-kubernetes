@@ -22,7 +22,6 @@ import (
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -94,6 +93,7 @@ var _ = Describe("Network Segmentation", func() {
 			IsVFIO:    false,
 			netName:   ovntypes.DefaultNetworkName,
 			nadName:   ovntypes.DefaultNetworkName,
+			nadKey:    ovntypes.DefaultNetworkName,
 		}
 		pr.ctx, pr.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 
@@ -216,7 +216,7 @@ var _ = Describe("Network Segmentation", func() {
 				namespace        = "foo-ns"
 			)
 
-			var fakeNetworkManager *testnm.FakeNetworkManager
+			var fakeNetworkManager *networkmanager.FakeNetworkManager
 
 			dummyGetCNIResult := func(request *PodRequest, _ PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
 				var gatewayIP net.IP
@@ -267,7 +267,7 @@ var _ = Describe("Network Segmentation", func() {
 				nadNamespaceLister.On("Get", "meganet").Return(nadMegaNet, nil)
 				nadNetwork, err := util.ParseNADInfo(nadMegaNet)
 				Expect(err).NotTo(HaveOccurred())
-				fakeNetworkManager = &testnm.FakeNetworkManager{
+				fakeNetworkManager = &networkmanager.FakeNetworkManager{
 					PrimaryNetworks: make(map[string]util.NetInfo),
 				}
 				fakeNetworkManager.PrimaryNetworks[nadMegaNet.Namespace] = nadNetwork
@@ -365,7 +365,7 @@ var _ = Describe("Network Segmentation", func() {
 							PodAnnotation: *podNADAnnotation,
 							MTU:           1400,
 							NetName:       "tenantred",
-							NADName:       "foo-ns/meganet",
+							NADKey:        "foo-ns/meganet",
 						}))
 					Expect(response.PrimaryUDNPodReq.IfName).To(Equal("ovn-udn1"))
 					Expect(response.PodIFInfo.NetName).To(Equal("default"))

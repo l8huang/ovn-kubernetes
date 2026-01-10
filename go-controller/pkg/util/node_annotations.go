@@ -137,15 +137,20 @@ const (
 	// It is set by cluster manager.
 	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
+	// In multi-vteps case, the node will have multiple transit switch ports.
+	// This annotation will store all the transit switch port tunnel ids.
+	// Its length and order must match k8s.ovn.org/node-encap-ips.
+	OvnTransitSwitchPortTunnelIDs = "k8s.ovn.org/node-transit-switch-port-tunnel-ids"
+
 	// OvnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
 	OvnNodeID = "k8s.ovn.org/node-id"
 
 	// InvalidNodeID indicates an invalid node id
 	InvalidNodeID = -1
 
-	// ovnNetworkIDs is the constant string representing the ids allocated for the
+	// OvnNetworkIDs is the constant string representing the ids allocated for the
 	// default network and other layer3 secondary networks by cluster manager.
-	ovnNetworkIDs = "k8s.ovn.org/network-ids"
+	OvnNetworkIDs = "k8s.ovn.org/network-ids"
 
 	// ovnUDNLayer2NodeGRLRPTunnelIDs is the constant string representing the tunnel id allocated for the
 	// UDN L2 network for this node's GR LRP by cluster manager. This is used to create the remote tunnel
@@ -617,6 +622,10 @@ func createPrimaryIfAddrAnnotation(annotationName string, nodeAnnotation map[str
 func CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotation map[string]interface{}, nodeIPNetv4,
 	nodeIPNetv6 *net.IPNet) (map[string]interface{}, error) {
 	return createPrimaryIfAddrAnnotation(OvnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
+}
+
+func NodeTransitSwitchPortTunnelIDsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnTransitSwitchPortTunnelIDs] != newNode.Annotations[OvnTransitSwitchPortTunnelIDs]
 }
 
 func NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool {
@@ -1136,6 +1145,45 @@ func UpdateNodeIDAnnotation(annotations map[string]interface{}, nodeID int) map[
 	return annotations
 }
 
+func UpdateNodeTransitSwitchPortTunnelIDsAnnotation(annotations map[string]interface{}, tunnelIds []int) (map[string]interface{}, error) {
+	if annotations == nil {
+		annotations = make(map[string]interface{})
+	}
+
+	data, err := json.Marshal(tunnelIds)
+	if err != nil {
+		return nil, err
+	}
+
+	annotations[OvnTransitSwitchPortTunnelIDs] = string(data)
+	return annotations, nil
+}
+
+// GetNodeIdName returns the node ID name corresponding to the encap IP at the given `index`
+// in the k8s.ovn.org/node-encap-ips annotation.
+func GetNodeIdName(nodeName string, index int) string {
+	if index < 1 {
+		return nodeName
+	}
+	// when the index of the encap IPs in the node > 1, using below naming convention:
+	// <node>_encap<i>
+	return fmt.Sprintf("%s_encap%d", nodeName, index)
+}
+
+func GetNodeTransitSwitchPortTunnelIDs(node *corev1.Node) ([]int, error) {
+	tunnelIdsString, ok := node.Annotations[OvnTransitSwitchPortTunnelIDs]
+	if !ok {
+		return nil, nil
+	}
+
+	var tunnelIds []int
+	if err := json.Unmarshal([]byte(tunnelIdsString), &tunnelIds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tunnel ids for node %s: %v", node.Name, err)
+	}
+
+	return tunnelIds, nil
+}
+
 // GetNodeID returns the id of the node set in the 'OvnNodeID' node annotation.
 // Returns InvalidNodeID (-1) if the 'OvnNodeID' node annotation is not set or if the value is
 // not an integer value. On error also returns:
@@ -1225,17 +1273,17 @@ func parseNetworkMapAnnotation(nodeAnnotations map[string]string, annotationName
 	return idsStrMap, nil
 }
 
-// ParseNetworkIDAnnotation parses the 'ovnNetworkIDs' annotation for the specified
+// ParseNetworkIDAnnotation parses the 'OvnNetworkIDs' annotation for the specified
 // network in 'netName' and returns the network id.
 func ParseNetworkIDAnnotation(node *corev1.Node, netName string) (int, error) {
-	networkIDsMap, err := parseNetworkMapAnnotation(node.Annotations, ovnNetworkIDs)
+	networkIDsMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNetworkIDs)
 	if err != nil {
 		return types.InvalidID, err
 	}
 
 	networkID, ok := networkIDsMap[netName]
 	if !ok {
-		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNetworkIDs, netName)
+		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, OvnNetworkIDs, netName)
 	}
 
 	return strconv.Atoi(networkID)
@@ -1244,7 +1292,7 @@ func ParseNetworkIDAnnotation(node *corev1.Node, netName string) (int, error) {
 // updateNetworkAnnotation updates the provided annotationName in the 'annotations' map
 // with the provided ID in 'annotationName's value.  If 'id' is InvalidID (-1)
 // it deletes the annotationName annotation from the map.
-// It is currently used for ovnNetworkIDs annotation updates
+// It is currently used for OvnNetworkIDs annotation updates
 func updateNetworkAnnotation(annotations map[string]string, netName string, id int, annotationName string) error {
 	var bytes []byte
 
@@ -1285,13 +1333,13 @@ func updateNetworkAnnotation(annotations map[string]string, netName string, id i
 	return nil
 }
 
-// UpdateNetworkIDAnnotation updates the ovnNetworkIDs annotation for the network name 'netName' with the network id 'networkID'.
+// UpdateNetworkIDAnnotation updates the OvnNetworkIDs annotation for the network name 'netName' with the network id 'networkID'.
 // If 'networkID' is invalid network ID (-1), then it deletes that network from the network ids annotation.
 func UpdateNetworkIDAnnotation(annotations map[string]string, netName string, networkID int) (map[string]string, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	err := updateNetworkAnnotation(annotations, netName, networkID, ovnNetworkIDs)
+	err := updateNetworkAnnotation(annotations, netName, networkID, OvnNetworkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1301,7 +1349,7 @@ func UpdateNetworkIDAnnotation(annotations map[string]string, netName string, ne
 // GetNodeNetworkIDsAnnotationNetworkIDs parses the "k8s.ovn.org/network-ids" annotation
 // on a node and returns the map of network name and ids.
 func GetNodeNetworkIDsAnnotationNetworkIDs(node *corev1.Node) (map[string]int, error) {
-	networkIDsStrMap, err := parseNetworkMapAnnotation(node.Annotations, ovnNetworkIDs)
+	networkIDsStrMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNetworkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1317,7 +1365,7 @@ func GetNodeNetworkIDsAnnotationNetworkIDs(node *corev1.Node) (map[string]int, e
 	return networkIDsMap, nil
 }
 
-// NodeNetworkIDAnnotationChanged returns true if the ovnNetworkIDs annotation in the corev1.Nodes doesn't match
+// NodeNetworkIDAnnotationChanged returns true if the OvnNetworkIDs annotation in the corev1.Nodes doesn't match
 func NodeNetworkIDAnnotationChanged(oldNode, newNode *corev1.Node, netName string) bool {
 	oldNodeNetID, _ := ParseNetworkIDAnnotation(oldNode, netName)
 	newNodeNetID, _ := ParseNetworkIDAnnotation(newNode, netName)
@@ -1349,8 +1397,8 @@ func filterIPVersion(cidrs []netip.Prefix, v6 bool) []netip.Prefix {
 	return validCIDRs
 }
 
-func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) error {
-	return nodeAnnotator.Set(OVNNodeEncapIPs, sets.List(encapips))
+func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips []string) error {
+	return nodeAnnotator.Set(OVNNodeEncapIPs, encapips)
 }
 
 // ParseNodeEncapIPsAnnotation returns the encap IPs set on a node

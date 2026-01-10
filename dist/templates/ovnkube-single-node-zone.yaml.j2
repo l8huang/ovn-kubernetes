@@ -74,7 +74,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NB
           value: "{{ ovn_loglevel_nb }}"
         - name: OVN_NORTHD_BACKOFF_INTERVAL
@@ -148,7 +148,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_SB
           value: "{{ ovn_loglevel_sb }}"
         - name: K8S_APISERVER
@@ -215,7 +215,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: "{{ ovn_loglevel_northd }}"
         - name: K8S_APISERVER
@@ -312,10 +312,14 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {% if (enable_coredumps | default("false")) == "true" -%}
+        - name: GOTRACEBACK
+          value: "crash"
+        {% endif -%}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: "{{ ovn_egress_service_enable }}"
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: "{{ ovnkube_node_loglevel }}"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -392,6 +396,8 @@ spec:
           value: "{{ ovn_disable_forwarding }}"
         - name: OVN_ENCAP_PORT
           value: "{{ ovn_encap_port }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVN_DISABLE_PKT_MTU_CHECK
           value: "{{ ovn_disable_pkt_mtu_check }}"
         - name: OVN_NETFLOW_TARGETS
@@ -422,8 +428,6 @@ spec:
           value: "{{ ovn_ex_gw_networking_interface }}"
         - name: OVN_SSL_ENABLE
           value: "{{ ovn_ssl_en }}"
-        - name: OVN_DISABLE_OVN_IFACE_ID_VER
-          value: "{{ ovn_disable_ovn_iface_id_ver }}"
         - name: OVN_REMOTE_PROBE_INTERVAL
           value: "{{ ovn_remote_probe_interval }}"
         - name: OVN_MONITOR_ALL
@@ -438,8 +442,12 @@ spec:
           value: "{{ ovn_lflow_cache_limit_kb }}"
         - name: OVN_MULTI_NETWORK_ENABLE
           value: "{{ ovn_multi_network_enable }}"
+        - name: OVN_MULTI_VTEP_ENABLE
+          value: "{{ ovn_multi_vtep_enable }}"
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: "{{ ovn_network_segmentation_enable }}"
+        - name: OVN_NETWORK_CONNECT_ENABLE
+          value: "{{ ovn_network_connect_enable }}"
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: "{{ ovn_pre_conf_udn_addr_enable }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
@@ -517,7 +525,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: "{{ ovn_loglevel_controller }}"
         - name: K8S_APISERVER
@@ -573,7 +581,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -582,6 +590,8 @@ spec:
           value: "local"
         - name: OVN_SOUTH
           value: "local"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         # end of container
 
       nodeSelector:

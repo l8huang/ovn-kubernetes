@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -59,8 +60,11 @@ type PodInterfaceInfo struct {
 
 	// network name, for default network, it is "default", otherwise it is net-attach-def's netconf spec name
 	NetName string `json:"netName"`
-	// NADName, for default network, it is "default", otherwise, in the form of net-attach-def's <Namespace>/<Name>
-	NADName string `json:"nadName"`
+	// NADKey, for default network, it is "default", otherwise, in the form of net-attach-def's <Namespace>/<Name>{/index}
+	NADKey string `json:"nadKey"`
+	// pod interface names of the same NAD, in plumbing order.
+	// Only set for when there are more than one pod interface with the same UDN
+	PodIfNamesOfSameNAD []string `json:"pod-if-names"`
 }
 
 // Explicit type for CNI commands the server handles
@@ -168,6 +172,10 @@ type PodRequest struct {
 	// also, need to find the pod annotation, dpu pod connection/status annotations of the given NAD ("default"
 	// for default network).
 	nadName string
+	// for default/primary UDN network, nadKey is the same as nadName, for secondary UDN, if a Pod requests
+	// network attachment of multiple same secondary UDN, nadKey would be nadName for its first interface CNI request,
+	// and <nadName>/<index> (index starting from 1) for the subsequent interface CNI request
+	nadKey string
 
 	// the DeviceInfo struct
 	deviceInfo nadapi.DeviceInfo
@@ -185,12 +193,15 @@ type ClientSet struct {
 	kclient   kubernetes.Interface
 	podLister corev1listers.PodLister
 	nadLister nadv1Listers.NetworkAttachmentDefinitionLister
+	kube      kube.Kube
 }
 
-func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodLister) *ClientSet {
+func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodLister, nadLister nadv1Listers.NetworkAttachmentDefinitionLister) *ClientSet {
 	return &ClientSet{
 		kclient:   kclient,
 		podLister: podLister,
+		nadLister: nadLister,
+		kube:      kube.Kube{KClient: kclient},
 	}
 }
 

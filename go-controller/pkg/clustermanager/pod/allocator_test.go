@@ -32,10 +32,10 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -135,6 +135,10 @@ type idAllocatorStub struct {
 }
 
 func (a *idAllocatorStub) AllocateID(string) (int, error) {
+	panic("not implemented") // TODO: Implement
+}
+
+func (a *idAllocatorStub) GetID(string) int {
 	panic("not implemented") // TODO: Implement
 }
 
@@ -593,7 +597,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
 				},
 			},
-			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": test reserve failure`,
+			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": test reserve failure`,
 		},
 		{
 			name:        "should emit pod event when macRegistry fail to reserve pod's MAC due to MAC conflict",
@@ -605,8 +609,8 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
 				},
 			},
-			expectError:  `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`,
-			expectEvents: []string{`Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`},
+			expectError:  `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": MAC address already in use`,
+			expectEvents: []string{`Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": MAC address already in use`},
 		},
 		{
 			name:        "should NOT fail when macRegistry gets repeated reserve requests (same mac and owner)",

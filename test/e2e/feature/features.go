@@ -21,11 +21,13 @@ var (
 	Interconnect          = New("Interconnect")
 	Multicast             = New("Multicast")
 	MultiHoming           = New("MultiHoming")
+	MultiVTEP             = New("MultiVTEP")
 	NodeIPMACMigration    = New("NodeIPMACMigration")
 	OVSCPUPin             = New("OVSCPUPin")
 	RouteAdvertisements   = New("RouteAdvertisements")
 	Unidle                = New("Unidle")
 	NetworkQos            = New("NetworkQos")
+	NetworkConnect        = New("NetworkConnect")
 )
 
 func New(name string) ginkgo.Labels {

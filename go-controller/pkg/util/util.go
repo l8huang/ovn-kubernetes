@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -732,6 +733,14 @@ func (le LBEndpoints) GetV6Destinations() []IPPort {
 // Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
 type PortToLBEndpoints map[string]LBEndpoints
 
+// GetLBEndpoints returns the LBEndpoints belonging to key, or an error otherwise.
+func (p PortToLBEndpoints) GetLBEndpoints(key string) (LBEndpoints, error) {
+	if lbe, ok := p[key]; ok {
+		return lbe, nil
+	}
+	return LBEndpoints{}, fmt.Errorf("cannot find key %q in PortToLBEndpoints %+v", key, p)
+}
+
 // GetAddresses returns all unique IP addresses from all ports in the PortToLBEndpoints map.
 // e.g. for PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}, "UDP/dns": {Port: 53, V4IPs: ["192.168.1.11"]}},
 // returns sets.Set{"192.168.1.10", "192.168.1.11"}.
@@ -886,6 +895,23 @@ func GetEndpointsForService(endpointSlices []*discoveryv1.EndpointSlice, service
 	}
 
 	return globalEndpoints, localEndpoints, errors.Join(validationErrors...)
+}
+
+// FindServicePortForEndpointSlicePort returns the ServicePort that corresponds to an EndpointSlice port
+// by matching the port name and protocol. This is the canonical way to map EndpointSlice ports to
+// Service ports, as Kubernetes guarantees that ServicePort.Name matches EndpointPort.Name.
+func FindServicePortForEndpointSlicePort(service *corev1.Service, endpointslicePortName string, endpointslicePortProtocol corev1.Protocol) (*corev1.ServicePort, error) {
+	if service == nil {
+		return nil, fmt.Errorf("unable to resolve port for endpointslice %q/%q: service is nil",
+			endpointslicePortName, endpointslicePortProtocol)
+	}
+	for _, servicePort := range service.Spec.Ports {
+		if servicePort.Name == endpointslicePortName && servicePort.Protocol == endpointslicePortProtocol {
+			return &servicePort, nil
+		}
+	}
+	return nil, fmt.Errorf("service %s/%s has no port with name %q and protocol %s",
+		service.Namespace, service.Name, endpointslicePortName, endpointslicePortProtocol)
 }
 
 // groupEndpointsByNode organizes a list of endpoints by their associated node names.
@@ -1068,4 +1094,13 @@ func getPortName(name *string) string {
 		return ""
 	}
 	return *name
+}
+
+// GetJSONArrayLength unmarshals a JSON string and returns the number of elements in the array
+func GetJSONArrayLength(input string) int {
+	var list []interface{}
+	if err := json.Unmarshal([]byte(input), &list); err != nil {
+		return 0
+	}
+	return len(list)
 }

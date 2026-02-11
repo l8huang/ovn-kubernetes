@@ -255,6 +255,15 @@ func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnl
 	nsInfo := bnc.namespaces[ns]
 	nsInfoExisted := false
 	if nsInfo == nil {
+		// Before creating a new namespace entry, verify the namespace still exists.
+		// It may have been deleted (nsInfo removed from map) while the address set
+		// is still present (destroy is delayed). Re-creating would call NewAddressSet
+		// for a name that still exists in the factory and cause a duplicate.
+		_, getErr := bnc.watchFactory.GetNamespace(ns)
+		if getErr != nil {
+			bnc.namespacesMutex.Unlock()
+			return nil, nil, fmt.Errorf("namespace %s does not exist", ns)
+		}
 		nsInfo = &namespaceInfo{
 			relatedNetworkPolicies: map[string]bool{},
 			multicastEnabled:       false,

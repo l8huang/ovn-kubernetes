@@ -15,4 +15,6 @@ const (
 	// GatewayMTU can be used by LogicalRouterPort to specify the MTU for the gateway port.
 	// If set, logical flows will be added to router pipeline to check packet length.
 	GatewayMTU = "gateway_mtu"
+
+	RequestedEncapIP = "requested-encap-ip"
 )

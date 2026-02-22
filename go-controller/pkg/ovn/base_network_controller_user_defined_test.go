@@ -251,7 +251,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 
 		var (
 			layer2NAD *nadapi.NetworkAttachmentDefinition
-			netInfo   util.NetInfo
 
 			testNode1    corev1.Node
 			testNode2    corev1.Node
@@ -273,11 +272,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			// Create layer2 NAD
 			layer2NAD = ovntest.GenerateNAD("blue-l2-net", "blue-l2-net", "blue-ns",
 				types.Layer2Topology, "10.1.0.0/16", types.NetworkRoleSecondary)
-
-			// Convert NAD to NetInfo
-			var err error
-			netInfo, err = util.ParseNADInfo(layer2NAD)
-			Expect(err).NotTo(HaveOccurred())
 
 			node1ChassisID := "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
 			node2ChassisID := "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"
@@ -323,7 +317,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 
 		})
 
-		It("should update port binding for remote pod with encap IP", func() {
+		It("should set requested-encap-ip option for remote pod logical switch port", func() {
 			// Enable interconnect for layer2 topology
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -369,28 +363,21 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(err).NotTo(HaveOccurred())
 			pod.Annotations = annotation
 
-			By("Verify the conditions that should trigger Port_Binding.encap field update")
+			By("Verify the conditions that should trigger requested-encap-ip update")
 			isLocalPod := controller.bnc.isPodScheduledinLocalZone(pod)
 			isLayer2Interconnect := controller.bnc.isLayer2Interconnect()
 			Expect(isLocalPod).To(BeFalse(), "Pod should be on remote node")
 			Expect(isLayer2Interconnect).To(BeTrue(), "Layer2 interconnect should be enabled")
 
-			By("Create Port_Binding in SB database to simulate ovn-northd behavior")
-			// add the transit switch port bindings on behalf of ovn-northd so that
-			// the node gets added successfully. This is required for test simulation
-			// and not required in real world scenario.
 			layer2NADName := util.GetNADName(layer2NAD.ObjectMeta.Namespace, layer2NAD.ObjectMeta.Name)
 			transistSwitchPortName := controller.bnc.GetLogicalPortName(pod, layer2NADName)
-			transistSwitchName := netInfo.GetNetworkScopedName(types.OVNLayer2Switch)
-			err = libovsdbtest.CreateTransitSwitchPortBindings(fakeOVN.sbClient, transistSwitchName, transistSwitchPortName)
-			Expect(err).NotTo(HaveOccurred())
 
 			By("Calling ensurePodForUserDefinedNetwork for Pod creation event without encap IP")
 			err = controller.bnc.ensurePodForUserDefinedNetwork(pod, true)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying Port_Binding.encap field is empty when encap IP is not set")
-			verifyPortBindingEncap(fakeOVN, transistSwitchPortName, "")
+			By("Verifying requested-encap-ip is not set when encap IP annotation is not present")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, transistSwitchPortName, "", false)
 
 			newPod := pod.DeepCopy()
 			podAnnotation.EncapIP = node2Encap2.IP
@@ -403,28 +390,28 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			err = controller.bnc.ensurePodForUserDefinedNetwork(newPod, true)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying Port_Binding.encap field was updated according to encap IP")
-			verifyPortBindingEncap(fakeOVN, transistSwitchPortName, node2Encap2.UUID)
+			By("Verifying requested-encap-ip was updated according to encap IP")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, transistSwitchPortName, node2Encap2.IP, true)
 		})
 	})
 })
 
-func verifyPortBindingEncap(fakeOVN *FakeOVN, transistSwitchPortName string, expectedEncapUUID string) {
+func verifyLogicalSwitchPortRequestedEncapIP(fakeOVN *FakeOVN, logicalPortName, expectedEncapIP string, expectedPresent bool) {
+	var logicalSwitchPorts []*nbdb.LogicalSwitchPort
+	Expect(fakeOVN.nbClient.List(context.Background(), &logicalSwitchPorts)).To(Succeed())
 
-	var portBindings []*sbdb.PortBinding
-	Expect(fakeOVN.sbClient.List(context.Background(), &portBindings)).To(Succeed())
-
-	actualEncapUUID := ""
-	for _, pb := range portBindings {
-		if pb.LogicalPort == transistSwitchPortName {
-			// pb.Encap points to the UUID of the Encap object
-			if pb.Encap != nil {
-				actualEncapUUID = *pb.Encap
-			}
-			Expect(actualEncapUUID).To(Equal(expectedEncapUUID))
-			return
+	for _, lsp := range logicalSwitchPorts {
+		if lsp.Name != logicalPortName {
+			continue
 		}
+
+		requestedEncapIP, present := lsp.Options["requested-encap-ip"]
+		Expect(present).To(Equal(expectedPresent))
+		if expectedPresent {
+			Expect(requestedEncapIP).To(Equal(expectedEncapIP))
+		}
+		return
 	}
 
-	Fail("No Port_Binding found for transit switch port ")
+	Fail("No Logical_Switch_Port found for transit switch port")
 }

@@ -446,7 +446,7 @@ func (bnc *BaseNetworkController) ensurePodAnnotation(pod *corev1.Pod, nadName s
 }
 
 func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadName string,
-	network *nadapi.NetworkSelectionElement, enable *bool) (ops []ovsdb.Operation,
+	network *nadapi.NetworkSelectionElement, enable *bool, encapIP string) (ops []ovsdb.Operation,
 	lsp *nbdb.LogicalSwitchPort, podAnnotation *util.PodAnnotation, newlyCreatedPort bool, err error) {
 	var ls *nbdb.LogicalSwitch
 
@@ -537,6 +537,10 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadNa
 
 	if !config.Kubernetes.DisableRequestedChassis {
 		lsp.Options[libovsdbops.RequestedChassis] = pod.Spec.NodeName
+	}
+
+	if encapIP != "" {
+		lsp.Options[libovsdbops.RequestedEncapIP] = encapIP
 	}
 
 	// let's calculate if this network controller's role for this pod

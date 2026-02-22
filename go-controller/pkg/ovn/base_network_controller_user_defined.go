@@ -333,7 +333,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
 
 	if requiresLogicalPort {
-		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadName, network, lspEnabled)
+		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadName, network, lspEnabled, "")
 		if err != nil {
 			return err
 		}
@@ -404,19 +404,20 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	// set remote layer 2 LSP's Port Binding's encap field according to encap ip in the pod annotation
 	if !isLocalPod && bsnc.isLayer2Interconnect() && podAnnotation.EncapIP != "" {
-		nodeObj, err := bsnc.watchFactory.GetNode(pod.Spec.NodeName)
+
+		portName := bsnc.GetLogicalPortName(pod, nadName)
+		klog.Infof("Update logical port %s option:requested-encap-ip=%s", portName, podAnnotation.EncapIP)
+
+		lsp = &nbdb.LogicalSwitchPort{Name: portName}
+
+		lsp.Options = make(map[string]string)
+		lsp.Options[libovsdbops.RequestedEncapIP] = podAnnotation.EncapIP
+
+		err = libovsdbops.UpdateLogicalSwitchPortSetOptions(bsnc.nbClient, lsp)
 		if err != nil {
-			return fmt.Errorf("failed to fetch node %s: %w", pod.Spec.NodeName, err)
-		}
-		chassisID, err := util.ParseNodeChassisIDAnnotation(nodeObj)
-		if err != nil || chassisID == "" {
-			return fmt.Errorf("failed to parse chassis ID for node %s: %w", pod.Spec.NodeName, err)
-		}
-		if err = libovsdbops.UpdatePortBindingSetEncap(bsnc.sbClient, lsp.Name, chassisID, podAnnotation.EncapIP); err != nil {
-			return fmt.Errorf("failed to update port binding for %s: %w", lsp.Name, err)
+			return fmt.Errorf("error updating logical switch port %s option:requested-encap-ip=%sv", portName, err)
 		}
 	}
-
 	if lsp != nil {
 		_ = bsnc.logicalPortCache.add(pod, switchName, nadName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 		if bsnc.requireDHCP(pod) {

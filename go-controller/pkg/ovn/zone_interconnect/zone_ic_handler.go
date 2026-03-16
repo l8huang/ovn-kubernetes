@@ -497,6 +497,9 @@ func (zic *ZoneInterconnectHandler) createLocalNodeTransitSwitchPort(node *corev
 		libovsdbops.RouterPort:      logicalRouterPortName,
 		libovsdbops.RequestedTnlKey: strconv.Itoa(tunnelID),
 	}
+	if encapIp != "" {
+		lspOptions[libovsdbops.RequestedEncapIP] = encapIp
+	}
 
 	// Store the node name and network name in the external_ids column for book keeping
 	externalIDs := map[string]string{
@@ -510,17 +513,6 @@ func (zic *ZoneInterconnectHandler) createLocalNodeTransitSwitchPort(node *corev
 		lportTypeRouter, []string{lportTypeRouterAddr}, lspOptions, externalIDs)
 	if err != nil {
 		return err
-	}
-
-	if encapIp != "" {
-		klog.V(5).Infof("Updating port binding for local LSP %s with encap ip %s", transitSwitchPortName, encapIp)
-		chassisID, err := util.ParseNodeChassisIDAnnotation(node)
-		if err != nil || chassisID == "" {
-			return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
-		}
-		if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, transitSwitchPortName, chassisID, encapIp); err != nil {
-			return fmt.Errorf("failed to update port binding for %s: %w", transitSwitchPortName, err)
-		}
 	}
 
 	// Its possible that node is moved from a remote zone to the local zone. Check and delete the remote zone routes
@@ -702,6 +694,9 @@ func (zic *ZoneInterconnectHandler) createRemoteNodeTransitSwitchPort(node *core
 		libovsdbops.RequestedTnlKey:  strconv.Itoa(tunnelID),
 		libovsdbops.RequestedChassis: node.Name,
 	}
+	if encapIp != "" {
+		lspOptions[libovsdbops.RequestedEncapIP] = encapIp
+	}
 
 	// Store the node name and network name in the external_ids column for book keeping
 	externalIDs := map[string]string{
@@ -713,17 +708,6 @@ func (zic *ZoneInterconnectHandler) createRemoteNodeTransitSwitchPort(node *core
 	remotePortName := GetNodeTransitSwitchPortName(zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name), encapIndex)
 	if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
 		return err
-	}
-
-	if encapIp != "" {
-		klog.V(5).Infof("Updating port binding for remote TSP %s with encap ip %s", remotePortName, encapIp)
-		chassisID, err := util.ParseNodeChassisIDAnnotation(node)
-		if err != nil || chassisID == "" {
-			return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
-		}
-		if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, remotePortName, chassisID, encapIp); err != nil {
-			return fmt.Errorf("failed to update port binding for %s: %w", remotePortName, err)
-		}
 	}
 
 	return nil
@@ -824,15 +808,15 @@ func (zic *ZoneInterconnectHandler) EnsureRemoteNodeTransitSwitchPortForPod(pod 
 	} else {
 		klog.V(5).Infof("Transit switch port %s already exists for node %s encap index %d",
 			remotePortName, node.Name, encapIndex)
-		// Ensure port binding is updated with encap even if port already exists
+		// Ensure LSP requested-encap-ip is updated even if port already exists.
 		if encapIP != "" {
-			klog.V(5).Infof("Updating port binding for existing remote TSP %s with encap ip %s", remotePortName, encapIP)
-			chassisID, err := util.ParseNodeChassisIDAnnotation(node)
-			if err != nil || chassisID == "" {
-				return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
+			klog.V(5).Infof("Updating existing remote TSP %s option:requested-encap-ip=%s", remotePortName, encapIP)
+			if lsp.Options == nil {
+				lsp.Options = map[string]string{}
 			}
-			if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, remotePortName, chassisID, encapIP); err != nil {
-				return fmt.Errorf("failed to update port binding for %s: %w", remotePortName, err)
+			lsp.Options[libovsdbops.RequestedEncapIP] = encapIP
+			if err = libovsdbops.UpdateLogicalSwitchPortSetOptions(zic.nbClient, lsp); err != nil {
+				return fmt.Errorf("failed to update requested-encap-ip for %s: %w", remotePortName, err)
 			}
 		}
 	}

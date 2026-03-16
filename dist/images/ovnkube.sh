@@ -266,6 +266,7 @@ ovn_egressservice_enable=${OVN_EGRESSSERVICE_ENABLE:-false}
 #OVN_MULTI_NETWORK_ENABLE - enable multiple network support for ovn-kubernetes
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_MULTI_VTEP_ENABLE - enable multiple VTEP support for ovn-kubernetes
+OVN_MULTI_VTEP_ENABLE=true
 ovn_multi_vtep_enable=${OVN_MULTI_VTEP_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}

@@ -328,29 +328,19 @@ func CheckNorthboundResources(nbClient libovsdbclient.Client, transitSwitchName 
 	return nil
 }
 
-func CheckSouthboundResources(sbClient libovsdbclient.Client, expectedPortBindings []string) error {
+func CheckLSPRequestedEncapIPOptionsOnLogicalSwitchPorts(nbClient libovsdbclient.Client, expected []string) error {
 
-	var actualPortBindings []string
-	var sbPortBindings []*sbdb.PortBinding
-	gomega.Expect(sbClient.List(context.Background(), &sbPortBindings)).To(gomega.Succeed())
-	for _, pb := range sbPortBindings {
-		encapIP := ""
-		if pb.Encap != nil {
-			encapPredicate := func(item *sbdb.Encap) bool {
-				return item.UUID == *pb.Encap
-			}
-			encaps, err := libovsdbops.FindEncapWithPredicate(sbClient, encapPredicate)
-			if err != nil {
-				return fmt.Errorf("failed to find encap ip %s on for port_binding %s: %w", encapIP, pb.LogicalPort, err)
-			}
-			if len(encaps) > 0 {
-				encapIP = encaps[0].IP
-			}
+	var actual []string
+	var nbLogicalSwitchPorts []*nbdb.LogicalSwitchPort
+	gomega.Expect(nbClient.List(context.Background(), &nbLogicalSwitchPorts)).To(gomega.Succeed())
+	for _, lsp := range nbLogicalSwitchPorts {
+		requestedEncapIP := ""
+		if lsp.Options != nil {
+			requestedEncapIP = lsp.Options[libovsdbops.RequestedEncapIP]
 		}
-
-		actualPortBindings = append(actualPortBindings, fmt.Sprintf("%s:%s", pb.LogicalPort, encapIP))
+		actual = append(actual, fmt.Sprintf("%s:%s", lsp.Name, requestedEncapIP))
 	}
-	gomega.Expect(actualPortBindings).To(gomega.ConsistOf(expectedPortBindings))
+	gomega.Expect(actual).To(gomega.ConsistOf(expected))
 
 	return nil
 }
@@ -1424,7 +1414,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("Verify port bindings")
-				err = CheckSouthboundResources(libovsdbOvnSBClient, t.expectedAfterCreatePods.PortBindings)
+				err = CheckRequestedEncapIPOptionsOnLogicalSwitchPorts(libovsdbOvnNBClient, t.expectedAfterCreatePods.PortBindings)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("Delete pods")
@@ -1451,7 +1441,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 					expectedResources.LogicalRouterPorts,
 					expectedResources.StaticRoutes)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				err = CheckSouthboundResources(libovsdbOvnSBClient, expectedResources.PortBindings)
+				err = CheckRequestedEncapIPOptionsOnLogicalSwitchPorts(libovsdbOvnNBClient, expectedResources.PortBindings)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("Delete nodes")

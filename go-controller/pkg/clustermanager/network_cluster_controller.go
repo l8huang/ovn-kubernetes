@@ -24,6 +24,8 @@ import (
 	k8snodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/mac"
@@ -38,11 +40,14 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	objretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type NetworkStatusReporter func(networkName string, fieldManager string, condition *metav1.Condition, events ...*util.EventDetails) error
+
+const clusterManagerPodSpanPrefix = "ovnkube-cluster-manager.pod"
 
 // networkClusterController is the cluster controller for the networks. An
 // instance of this struct is expected to be created for each network. A network
@@ -911,8 +916,18 @@ func (h *networkClusterControllerEventHandler) AddResource(obj interface{}, _ bo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		err := h.ncc.podAllocator.Reconcile(nil, pod)
+		ctx := context.Background()
+		if parentCtx, ok := tracing.ContextFromPodAnnotations(ctx, pod.Annotations); ok {
+			ctx = parentCtx
+		}
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, clusterManagerPodSpanPrefix)
+		ctx, span := tracing.Tracer(clusterManagerPodSpanPrefix).Start(ctx, tracing.SpanName(ctx, "add"))
+		span.SetAttributes(tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))...)
+		defer span.End()
+		err := h.ncc.podAllocator.Reconcile(ctx, nil, pod)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
 	case factory.IPAMClaimsType:
@@ -937,8 +952,18 @@ func (h *networkClusterControllerEventHandler) UpdateResource(oldObj, newObj int
 		if !ok {
 			return fmt.Errorf("could not cast %T new object to *corev1.Pod", newObj)
 		}
-		err := h.ncc.podAllocator.Reconcile(old, new)
+		ctx := context.Background()
+		if parentCtx, ok := tracing.ContextFromPodAnnotations(ctx, new.Annotations); ok {
+			ctx = parentCtx
+		}
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, clusterManagerPodSpanPrefix)
+		ctx, span := tracing.Tracer(clusterManagerPodSpanPrefix).Start(ctx, tracing.SpanName(ctx, "update"))
+		span.SetAttributes(tracing.PodAttrs(new.Namespace, new.Name, string(new.UID))...)
+		defer span.End()
+		err := h.ncc.podAllocator.Reconcile(ctx, old, new)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
 	case factory.IPAMClaimsType:
@@ -958,8 +983,18 @@ func (h *networkClusterControllerEventHandler) DeleteResource(obj, _ interface{}
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		err := h.ncc.podAllocator.Reconcile(pod, nil)
+		ctx := context.Background()
+		if parentCtx, ok := tracing.ContextFromPodAnnotations(ctx, pod.Annotations); ok {
+			ctx = parentCtx
+		}
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, clusterManagerPodSpanPrefix)
+		ctx, span := tracing.Tracer(clusterManagerPodSpanPrefix).Start(ctx, tracing.SpanName(ctx, "delete"))
+		span.SetAttributes(tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))...)
+		defer span.End()
+		err := h.ncc.podAllocator.Reconcile(ctx, pod, nil)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
 	case factory.IPAMClaimsType:

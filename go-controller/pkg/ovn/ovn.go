@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -31,6 +34,7 @@ import (
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	networkconnectcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -118,7 +122,22 @@ func podBecameReady(oldPod, newPod *corev1.Pod) bool {
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensurePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, ovnkubeControllerPodSpanPrefix)
+	ctx, span := tracing.StartSpan(ctx, "setup-logical-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -134,16 +153,30 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 
 	if oc.isPodScheduledinLocalZone(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-		return oc.ensureLocalZonePod(oldPod, pod, addPort)
+		return oc.ensureLocalZonePod(ctx, oldPod, pod, addPort)
 	}
 
 	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	return oc.ensureRemoteZonePod(oldPod, pod)
+	return oc.ensureRemoteZonePod(ctx, oldPod, pod, addPort)
 }
 
 // ensureLocalZonePod tries to set up a local zone pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	ctx, span := tracing.StartSpan(ctx, "setup-local-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -166,7 +199,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 	}
 
 	if !util.PodWantsHostNetwork(pod) && addPort {
-		if err := oc.addLogicalPort(pod); err != nil {
+		if err := oc.addLogicalPortWithContext(ctx, pod); err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	} else {
@@ -209,7 +242,21 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 //   - For live-migratable VMs, ensures remote-zone pod-to-node routes
 //
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureRemoteZonePod(oldPod, pod *corev1.Pod) error {
+func (oc *DefaultNetworkController) ensureRemoteZonePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	_, span := tracing.StartSpan(ctx, "setup-remote-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	//FIXME: Update comments & reduce code duplication.
 	// check if this remote pod is serving as an external GW.
 	if oldPod != nil && (exGatewayAnnotationsChanged(oldPod, pod) || networkStatusAnnotationsChanged(oldPod, pod)) {

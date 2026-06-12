@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	corev1 "k8s.io/api/core/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
@@ -25,6 +28,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -240,7 +244,20 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 	return oc.releasePodIPs(pInfo)
 }
 
-func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) {
+func (oc *DefaultNetworkController) addLogicalPortWithContext(ctx context.Context, pod *corev1.Pod) (err error) {
+	ctx, span := tracing.StartSpan(ctx, "add-logical-port")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+	)...)
+
 	// If a node does node have an assigned hostsubnet don't wait for the logical switch to appear
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
@@ -275,7 +292,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	}()
 
 	nadKey := types.DefaultNetworkName
-	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(pod, nadKey, network, nil)
+	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(ctx, pod, nadKey, network, nil)
 	if err != nil {
 		return err
 	}

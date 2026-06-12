@@ -1,0 +1,61 @@
+
+# sudo sysctl fs.inotify.max_user_instances=1280
+# sudo sysctl fs.inotify.max_user_watches=655360
+
+export KUBECONFIG=${HOME}/ovn.conf
+export KIND_LOCAL_REGISTRY=false
+# export OVN_IMAGE=localhost:5000/ovn-daemonset-fedora:kind-vteps
+# export OVN_IMAGE=localhost:5000/ovn-kube-ubuntu:vteps-4
+export OVN_IMAGE=localhost:5000/ovn-daemonset-fedora:1.2.0-trace
+
+#export KIND_IMAGE=localhost:5000/kindest/node
+export KIND_IMAGE=kindest/node
+export K8S_VERSION=v1.35.0
+
+export KIND_CLUSTER_NAME=ovn
+export KIND_INSTALL_INGRESS=true
+export KIND_ALLOW_SYSTEM_WRITES=true
+export PARALLEL=true
+export CI_IMAGE_CACHE=tmp/image_cache/
+export CI_IMAGE_BASE_TAR=image-base.tar
+export CI_IMAGE_PR_TAR=image-pr.tar
+export CI_DIST_IMAGES_OUTPUT=dist/images/_output/
+export JOB_NAME=bgp-loose-isolation-noHA-shared-dualstack-snatGW-1br-ic-single-node-zones
+export OVN_HYBRID_OVERLAY_ENABLE=false
+export OVN_MULTICAST_ENABLE=true
+export OVN_EMPTY_LB_EVENTS=false
+export OVN_HA=false
+export OVN_DISABLE_SNAT_MULTIPLE_GWS=true
+export KIND_INSTALL_METALLB=false
+export OVN_GATEWAY_MODE=shared
+export OVN_SECOND_BRIDGE=false
+export ENABLE_MULTI_NET=true
+export ENABLE_MULTI_VTEP=true
+export ENABLE_NETWORK_SEGMENTATION=true
+export PLATFORM_IPV4_SUPPORT=true
+export PLATFORM_IPV6_SUPPORT=false
+export KIND_LOCAL_REGISTRY=false
+export KIND_INSTALL_KUBEVIRT=false
+export KIND_NUM_WORKER=2
+export OVN_DISABLE_FORWARDING=false
+export OVN_ENABLE_DNSNAMERESOLVER=false
+export OVN_NETWORK_QOS_ENABLE=false
+export TRAFFIC_FLOW_TESTS=
+export ENABLE_ROUTE_ADVERTISEMENTS=false
+export ENABLE_EVPN=false
+export ADVERTISE_DEFAULT_NETWORK=false
+export ENABLE_NETWORK_CONNECT=false
+export ENABLE_PRE_CONF_UDN_ADDR=true
+export ADVERTISED_UDN_ISOLATION_MODE=loose
+export OVN_UNPRIVILEGED_MODE=false
+export MULTI_POD_SUBNET=true
+export DYNAMIC_UDN_ALLOCATION=false
+export ENABLE_NO_OVERLAY=false
+export ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
+export ENABLE_NO_OVERLAY_MANAGED_ROUTING=false
+export ENABLE_TRACING=true
+
+# KIND_CREATE=false ./kind.sh --num-workers 2
+
+# ./kind.sh --num-workers 2
+

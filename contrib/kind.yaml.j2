@@ -22,6 +22,15 @@ kubeadmConfigPatches:
   apiServer:
     extraArgs:
       "v": "{{ cluster_log_level }}"
+{%- if enable_tracing == "true" %}
+      "tracing-config-file": "/etc/kubernetes/tracing/config.yaml"
+    extraVolumes:
+    - name: tracing-config
+      hostPath: "/etc/kubernetes/tracing"
+      mountPath: "/etc/kubernetes/tracing"
+      readOnly: true
+      pathType: DirectoryOrCreate
+{%- endif %}
   controllerManager:
     extraArgs:
       "v": "{{ cluster_log_level }}"
@@ -46,6 +55,14 @@ kubeadmConfigPatches:
   nodeRegistration:
     kubeletExtraArgs:
       "v": "{{ cluster_log_level }}"
+{%- if enable_tracing == "true" %}
+  ---
+  apiVersion: kubelet.config.k8s.io/v1beta1
+  kind: KubeletConfiguration
+  tracing:
+    endpoint: 127.0.0.1:4317
+    samplingRatePerMillion: {{ tracing_sampling_rate_per_million }}
+{%- endif %}
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
@@ -55,6 +72,12 @@ nodes:
        kubeletExtraArgs:
          node-labels: "ingress-ready=true"
          authorization-mode: "AlwaysAllow"
+{%- if enable_tracing == "true" %}
+   extraMounts:
+   - hostPath: {{ tracing_config_dir }}
+     containerPath: "/etc/kubernetes/tracing"
+     readOnly: true
+{%- endif %}
 {%- if ovn_ha is equalto "true" %}
 {%- for _ in range(1, ovn_num_master | int) %}
  - role: worker

@@ -16,6 +16,21 @@ set_default_params() {
   check_ipv6
   set_cluster_cidr_ip_families
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
+
+
+  ENABLE_TRACING=${ENABLE_TRACING:-false}
+  TRACING_NAMESPACE=${TRACING_NAMESPACE:-tracing}
+  TRACING_SAMPLING_RATE=${TRACING_SAMPLING_RATE:-1.0}
+  if [[ -z "${TRACING_SAMPLING_RATE_PER_MILLION:-}" ]]; then
+    TRACING_SAMPLING_RATE_PER_MILLION=$(awk -v rate="${TRACING_SAMPLING_RATE}" 'BEGIN { printf "%.0f", rate * 1000000 }')
+  fi
+
+  TRACING_CONFIG_DIR=${TRACING_CONFIG_DIR:-${DIR}/tracing}
+  TRACING_APISERVER_CONFIG_HOSTPATH="${TRACING_CONFIG_DIR}/config.yaml"
+
+  TRACING_TEMPO_CHART_VERSION=${TRACING_TEMPO_CHART_VERSION:-1.23.2}
+  TRACING_OTEL_COLLECTOR_CHART_VERSION=${TRACING_OTEL_COLLECTOR_CHART_VERSION:-0.111.1}
+  TRACING_GRAFANA_CHART_VERSION=${TRACING_GRAFANA_CHART_VERSION:-8.6.4}
 }
 
 usage() {
@@ -51,6 +66,7 @@ usage() {
     echo "       [ -cn  | --cluster-name ]"
     echo "       [ -mip | --metrics-ip <ip> ]"
     echo "       [ -mtu <mtu> ]"
+    echo "       [ -tr  | --enable-tracing ]"
     echo "       [ --enable-coredumps ]"
     echo "       [ -h ]"
     echo ""
@@ -94,6 +110,7 @@ usage() {
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
     echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
     echo "-mtu                                          Define the overlay mtu. DEFAULT: 1400 (1500 for no-overlay mode)"
+    echo "-tr  | --enable-tracing                       Enable API server and kubelet tracing with Tempo/Grafana. DEFAULT: Disabled"
     echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
     echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
@@ -268,6 +285,8 @@ parse_args() {
                                                   ;;
             -mtu )                                shift
                                                   OVN_MTU=$1
+                                                  ;;
+            -tr | --enable-tracing )              ENABLE_TRACING=true
                                                   ;;
             --enable-coredumps )                  ENABLE_COREDUMPS=true
                                                   ;;
@@ -445,6 +464,13 @@ print_params() {
      echo "OVN_LOG_LEVEL_SB = $OVN_LOG_LEVEL_SB"
      echo "OVN_LOG_LEVEL_NORTHD = $OVN_LOG_LEVEL_NORTHD"
      echo "OVN_LOG_LEVEL_CONTROLLER = $OVN_LOG_LEVEL_CONTROLLER"
+     echo "ENABLE_TRACING = $ENABLE_TRACING"
+     echo "TRACING_NAMESPACE = $TRACING_NAMESPACE"
+     echo "TRACING_SAMPLING_RATE = $TRACING_SAMPLING_RATE"
+     echo "TRACING_SAMPLING_RATE_PER_MILLION = $TRACING_SAMPLING_RATE_PER_MILLION"
+     if [[ "$ENABLE_TRACING" == true ]]; then
+       echo "Grafana access: kubectl port-forward -n ${TRACING_NAMESPACE} svc/grafana 3000:80"
+     fi
      echo ""
 }
 
@@ -461,6 +487,80 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_watches=524288
     # increase fs.inotify.max_user_instances
     sudo sysctl fs.inotify.max_user_instances=512
+}
+
+create_tracing_manifests() {
+  mkdir -p "${TRACING_CONFIG_DIR}"
+
+  cat > "${TRACING_APISERVER_CONFIG_HOSTPATH}" <<EOF
+apiVersion: apiserver.config.k8s.io/v1
+kind: TracingConfiguration
+samplingRatePerMillion: ${TRACING_SAMPLING_RATE_PER_MILLION}
+endpoint: 127.0.0.1:4317
+EOF
+}
+
+install_tracing_stack() {
+  local tracing_values_dir="${TRACING_CONFIG_DIR}/helm-values"
+  local tempo_values="${tracing_values_dir}/tempo-values.yaml"
+  local otel_collector_values="${tracing_values_dir}/otel-collector-values.yaml"
+  local grafana_values="${tracing_values_dir}/grafana-values.yaml"
+
+  kubectl get namespace "${TRACING_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${TRACING_NAMESPACE}"
+
+  helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+  helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts >/dev/null 2>&1 || true
+  helm repo update
+
+  for values_file in "${tempo_values}" "${otel_collector_values}" "${grafana_values}"; do
+    if [ ! -f "${values_file}" ]; then
+      echo "Tracing values file ${values_file} does not exist"
+      exit 1
+    fi
+  done
+
+  helm upgrade --install tempo grafana/tempo \
+    --namespace "${TRACING_NAMESPACE}" \
+    --version "${TRACING_TEMPO_CHART_VERSION}" \
+    -f "${tempo_values}"
+
+  helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
+    --namespace "${TRACING_NAMESPACE}" \
+    --version "${TRACING_OTEL_COLLECTOR_CHART_VERSION}" \
+    -f "${otel_collector_values}"
+
+  helm upgrade --install grafana grafana/grafana \
+    --namespace "${TRACING_NAMESPACE}" \
+    --version "${TRACING_GRAFANA_CHART_VERSION}" \
+    -f "${grafana_values}"
+}
+
+label_ovn_single_node_zones() {
+  KIND_NODES=$(kind_get_nodes)
+  for n in $KIND_NODES; do
+    kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
+  done
+}
+
+label_ovn_multiple_nodes_zones() {
+  KIND_NODES=$(kind_get_nodes | sort)
+  zone_idx=1
+  n=1
+  for node in $KIND_NODES; do
+    zone="zone-${zone_idx}"
+    kubectl label node "${node}" k8s.ovn.org/zone-name=${zone} --overwrite
+    if [ "${n}" == "1" ]; then
+      # Mark 1st node of each zone as zone control plane
+      kubectl label node "${node}" node-role.kubernetes.io/zone-controller="" --overwrite
+    fi
+
+    if [ "${n}" == "${KIND_NUM_NODES_PER_ZONE}" ]; then
+      n=1
+      zone_idx=$((zone_idx+1))
+    else
+      n=$((n+1))
+    fi
+  done
 }
 
 create_ovn_kubernetes() {
@@ -575,6 +675,9 @@ if [ "$KIND_ADD_NODES" == true ]; then
 fi
 
 if [ "$KIND_CREATE" == true ]; then
+  if [ "$ENABLE_TRACING" == true ]; then
+    create_tracing_manifests
+  fi
   create_kind_cluster
   if [ "$ENABLE_COREDUMPS" == true ]; then
     setup_coredumps
@@ -602,6 +705,7 @@ if [ "$KIND_CLUSTER_NAME" != "ovn" ]; then
   fixup_kubeconfig_names
 fi
 build_ovn_image
+
 detect_apiserver_url
 install_ovn_image
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
@@ -646,6 +750,10 @@ fi
 # fi
 
 kubectl_wait_pods
+
+if [ "$ENABLE_TRACING" == true ]; then
+  install_tracing_stack
+fi
 
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     kubectl_wait_dnsnameresolver_pods

@@ -1775,6 +1775,9 @@ create_kind_cluster() {
   ovn_num_worker=${KIND_NUM_WORKER} \
   kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
+  enable_tracing=${ENABLE_TRACING:-false} \
+  tracing_sampling_rate_per_million=${TRACING_SAMPLING_RATE_PER_MILLION:-1000000} \
+  tracing_config_dir=${TRACING_CONFIG_DIR:-${DIR}/tracing} \
   jinjanate "${KIND_CONFIG}" -o "${KIND_CONFIG_LCL}"
 
   # Create KIND cluster. For additional debug, add '--verbosity <int>': 0 None .. 3 Debug

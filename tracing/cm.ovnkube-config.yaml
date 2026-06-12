@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+    [ovnkubernetesfeature]
+    enable-tracing=true
+
+    [tracing]
+    endpoint=127.0.0.1:4317
+    insecure=true
+    service-name=ovn-kubernetes
+    sampling-rate=1.0
+    propagated-context-annotation-key=tracing.k8s.io/traceparent
+    export-timeout=10
+    batch-timeout=5
+    max-export-batch-size=512
+    max-queue-size=2048

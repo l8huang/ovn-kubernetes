@@ -17,6 +17,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipam "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip"
@@ -24,6 +27,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -119,6 +123,70 @@ func (m *macRegistryStub) Reserve(_ string, mac net.HardwareAddr) error {
 func (m *macRegistryStub) Release(_ string, mac net.HardwareAddr) error {
 	m.releaseMAC = mac
 	return nil
+}
+
+func Test_allocatePodAnnotationWithTunnelIDReturnsUpdatedPod(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+	network := &nadapi.NetworkSelectionElement{
+		Name:      "network",
+		Namespace: "namespace",
+	}
+	nadKey := util.GetNADName(network.Namespace, network.Name)
+	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+		Topology: types.Layer2Topology,
+		NetConf: cnitypes.NetConf{
+			Name: network.Name,
+		},
+		NADName: nadKey,
+		Role:    types.NetworkRolePrimary,
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	initialMAC := net.HardwareAddr{0x0a, 0x58, 0x0a, 0x80, 0x00, 0x02}
+	podAnnotations, err := util.MarshalPodAnnotation(nil, &util.PodAnnotation{
+		MAC: initialMAC,
+	}, nadKey)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "pod",
+			Namespace:   "namespace",
+			Annotations: podAnnotations,
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "node",
+		},
+	}
+	podIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	g.Expect(podIndexer.Add(pod)).To(gomega.Succeed())
+
+	updatedPod, podAnnotation, err := allocatePodAnnotationWithTunnelID(
+		corelisters.NewPodLister(podIndexer),
+		&kube.Kube{KClient: fake.NewSimpleClientset(pod.DeepCopy())},
+		nil,
+		&idAllocatorStub{nextID: 100},
+		netInfo,
+		&corev1.Node{},
+		pod,
+		nadKey,
+		network,
+		nil,
+		nil,
+		false,
+		types.NetworkRolePrimary,
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(updatedPod).NotTo(gomega.BeNil())
+	g.Expect(podAnnotation.TunnelID).To(gomega.Equal(100))
+
+	updatedPodAnnotation, err := util.UnmarshalPodAnnotation(updatedPod.Annotations, nadKey)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(updatedPodAnnotation).To(gomega.Equal(podAnnotation))
+	g.Expect(updatedPodAnnotation.TunnelID).To(gomega.Equal(100))
 }
 
 func Test_allocatePodAnnotationWithRollback(t *testing.T) {
